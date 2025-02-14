@@ -70,17 +70,6 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             }
         )
 
-    import copy
-    import datetime
-    import re
-
-    from django.db import DatabaseError
-    from django.db.backends.base.schema import (
-        BaseDatabaseSchemaEditor,
-        _related_non_m2m_objects,
-    )
-    from django.utils.duration import duration_iso_string
-
     class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         sql_create_column = "ALTER TABLE %(table)s ADD %(column)s %(definition)s"
         sql_alter_column_type = "MODIFY %(column)s %(type)s%(collation)s"
