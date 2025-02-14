@@ -15,7 +15,7 @@ from django.utils.functional import cached_property
 from django.utils.regex_helper import _lazy_re_compile
 
 from .base import Database
-from .utils import BulkInsertMapper, InsertVar, Oracle_datetime
+from .utils import BulkInsertMapper
 
 
 class DatabaseOperations(BaseDatabaseOperations):
@@ -390,7 +390,7 @@ END;
                     self.quote_name(field.column),
                 )
             )
-            params.append(InsertVar(field))
+            params.append(None)
         return "RETURNING %s INTO %s" % (
             ", ".join(field_names),
             ", ".join(["%s"] * len(params)),
@@ -596,7 +596,7 @@ END;
                     "USE_TZ is False."
                 )
 
-        return Oracle_datetime.from_datetime(value)
+        return value
 
     def adapt_timefield_value(self, value):
         if value is None:
@@ -609,7 +609,7 @@ END;
         if timezone.is_aware(value):
             raise ValueError("Oracle backend does not support timezone-aware times.")
 
-        return Oracle_datetime(
+        return datetime.datetime(
             1900, 1, 1, value.hour, value.minute, value.second, value.microsecond
         )
 
