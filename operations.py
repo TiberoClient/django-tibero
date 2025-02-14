@@ -58,7 +58,7 @@ BEGIN
         INTO seq_value;
     END LOOP;
 END;
-/"""
+"""
 
     # Oracle doesn't support string without precision; use the max string size.
     cast_char_field_without_max_length = "NVARCHAR2(2000)"
