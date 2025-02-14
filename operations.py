@@ -291,22 +291,6 @@ END;
     def deferrable_sql(self):
         return " DEFERRABLE INITIALLY DEFERRED"
 
-    def fetch_returned_insert_columns(self, cursor, returning_params):
-        columns = []
-        for param in returning_params:
-            value = param.get_value()
-            # Can be removed when cx_Oracle is no longer supported and
-            # python-oracle 2.1.2 becomes the minimum supported version.
-            if value == []:
-                raise DatabaseError(
-                    "The database did not return a new row id. Probably "
-                    '"ORA-1403: no data found" was raised internally but was '
-                    "hidden by the Oracle OCI library (see "
-                    "https://code.djangoproject.com/ticket/28859)."
-                )
-            columns.append(value[0])
-        return tuple(columns)
-
     def no_limit_value(self):
         return None
 
