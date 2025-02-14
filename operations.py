@@ -327,7 +327,7 @@ END;
 
     def last_insert_id(self, cursor, table_name, pk_name):
         sq_name = self._get_sequence_name(cursor, strip_quotes(table_name), pk_name)
-        cursor.execute('"%s".currval' % sq_name)
+        cursor.execute('SELECT "%s".currval FROM DUAL' % sq_name)
         return cursor.fetchone()[0]
 
     def lookup_cast(self, lookup_type, internal_type=None):
