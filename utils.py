@@ -4,64 +4,6 @@ import decimal
 from .base import Database
 
 
-class InsertVar:
-    """
-    A late-binding cursor variable that can be passed to Cursor.execute
-    as a parameter, in order to receive the id of the row created by an
-    insert statement.
-    """
-
-    types = {
-        "AutoField": int,
-        "BigAutoField": int,
-        "SmallAutoField": int,
-        "IntegerField": int,
-        "BigIntegerField": int,
-        "SmallIntegerField": int,
-        "PositiveBigIntegerField": int,
-        "PositiveSmallIntegerField": int,
-        "PositiveIntegerField": int,
-        "BooleanField": int,
-        "FloatField": Database.DB_TYPE_BINARY_DOUBLE, # TODO: Tibero에 맞게 수정
-        "DateTimeField": Database.DB_TYPE_TIMESTAMP,  # TODO: Tibero에 맞게 수정
-        "DateField": Database.Date,                   # TODO: Tibero에 맞게 수정
-        "DecimalField": decimal.Decimal,
-    }
-
-    def __init__(self, field):
-        internal_type = getattr(field, "target_field", field).get_internal_type()
-        self.db_type = self.types.get(internal_type, str)
-        self.bound_param = None
-
-    def bind_parameter(self, cursor):
-        self.bound_param = cursor.cursor.var(self.db_type)
-        return self.bound_param
-
-    def get_value(self):
-        return self.bound_param.getvalue()
-
-
-class Oracle_datetime(datetime.datetime):
-    """
-    A datetime object, with an additional class attribute
-    to tell oracledb to save the microseconds too.
-    """
-
-    input_size = Database.DB_TYPE_TIMESTAMP # TODO: Tibero에 맞게 수정
-
-    @classmethod
-    def from_datetime(cls, dt):
-        return Oracle_datetime(
-            dt.year,
-            dt.month,
-            dt.day,
-            dt.hour,
-            dt.minute,
-            dt.second,
-            dt.microsecond,
-        )
-
-
 class BulkInsertMapper:
     BLOB = "TO_BLOB(%s)"
     DATE = "TO_DATE(%s)"
@@ -92,9 +34,23 @@ class BulkInsertMapper:
     }
 
 
-def dsn(settings_dict):
-    if settings_dict["PORT"]:
-        host = settings_dict["HOST"].strip() or "localhost"
-        # TODO: Tibero에 맞게 코드 수정하기
-        return Database.makedsn(host, int(settings_dict["PORT"]), settings_dict["NAME"])
-    return settings_dict["NAME"]
+def encode_connection_string(fields):
+    """Encode dictionary of keys and values as an ODBC connection String.
+
+    See [MS-ODBCSTR] document:
+    https://msdn.microsoft.com/en-us/library/ee208909%28v=sql.105%29.aspx
+    """
+    # As the keys are all provided by us, don't need to encode them as we know
+    # they are ok.
+    return ';'.join(
+        '%s=%s' % (k, encode_value(v))
+        for k, v in fields.items()
+    )
+
+def encode_value(v):
+    """If the value contains a semicolon, or starts with a left curly brace,
+    then enclose it in curly braces and escape all right curly braces.
+    """
+    if ';' in v or v.strip(' ').startswith('{'):
+        return '{%s}' % (v.replace('}', '}}'),)
+    return v

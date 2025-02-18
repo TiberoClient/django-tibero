@@ -1,4 +1,5 @@
 import sys
+import time
 
 from django.conf import settings
 from django.db import DatabaseError
@@ -36,8 +37,8 @@ class DatabaseCreation(BaseDatabaseCreation):
                         cursor, parameters, verbosity, keepdb
                     )
                 except Exception as e:
-                    # TODO: 티베로에 맞게 수정하기
-                    if "ORA-01543" not in str(e):
+                    #  -7098은 Duplicate tablespace가 존재하면 발생하는 에러 번호
+                    if "-7098" not in e.args[1]:
                         # All errors except "tablespace already exists" cancel tests
                         self.log("Got an error creating the test database: %s" % e)
                         sys.exit(2)
@@ -57,9 +58,10 @@ class DatabaseCreation(BaseDatabaseCreation):
                             self._execute_test_db_destruction(
                                 cursor, parameters, verbosity
                             )
-                        # TODO: 티베로에 맞게 수정하기
-                        except DatabaseError as e:
-                            if "ORA-29857" in str(e):
+                        except Exception as e:
+                            # 테이블 스페이스를 사용하는 유저가 있을 경우 -7355 에러 발생
+                            # 따라서 유저를 삭제 후 테이블 스페이스 삭제 재시도
+                            if '-7355' in e.args[1]:
                                 self._handle_objects_preventing_db_destruction(
                                     cursor, parameters, verbosity, autoclobber
                                 )
@@ -71,11 +73,6 @@ class DatabaseCreation(BaseDatabaseCreation):
                                     % e
                                 )
                                 sys.exit(2)
-                        except Exception as e:
-                            self.log(
-                                "Got an error destroying the old test database: %s" % e
-                            )
-                            sys.exit(2)
                         try:
                             self._execute_test_db_creation(
                                 cursor, parameters, verbosity, keepdb
@@ -216,6 +213,9 @@ class DatabaseCreation(BaseDatabaseCreation):
             "SAVED_PASSWORD"
         ]
         self.connection.close()
+        # Hack: 왜인지 모르나 Tibero에서 connection을 닫아도 바로 유저를 삭제할 수 있지가 않습니다.
+        #       유저 삭제를 위해 잠시 기다려야 합니다.
+        time.sleep(1)
         parameters = self._get_test_db_params()
         with self._maindb_connection.cursor() as cursor:
             if self._test_user_create():
@@ -258,8 +258,7 @@ class DatabaseCreation(BaseDatabaseCreation):
                 """,
             ]
         # Ignore "tablespace already exists" error when keepdb is on.
-        # TODO: 티베로에 맞게 수정하기
-        acceptable_ora_err = "ORA-01543" if keepdb else None
+        acceptable_ora_err = "-7098" if keepdb else None
         self._execute_allow_fail_statements(
             cursor, statements, parameters, verbosity, acceptable_ora_err
         )
@@ -274,11 +273,14 @@ class DatabaseCreation(BaseDatabaseCreation):
                TEMPORARY TABLESPACE %(tblspace_temp)s
                QUOTA UNLIMITED ON %(tblspace)s
             """,
+            # TODO: 일반 유저중에 V$VERSION에 접근권한이 없으면 어떻게 하면 좋을지 고민하기
             """GRANT CREATE SESSION,
                      CREATE TABLE,
                      CREATE SEQUENCE,
                      CREATE PROCEDURE,
                      CREATE TRIGGER
+               TO %(user)s""",
+            """GRANT SELECT ON V$VERSION
                TO %(user)s""",
         ]
         # Ignore "user already exists" error when keepdb is on
@@ -315,7 +317,15 @@ class DatabaseCreation(BaseDatabaseCreation):
             "DROP TABLESPACE %(tblspace_temp)s "
             "INCLUDING CONTENTS AND DATAFILES CASCADE CONSTRAINTS",
         ]
-        self._execute_statements(cursor, statements, parameters, verbosity)
+        for statement in statements:
+            try:
+                self._execute_statements(cursor, [statement], parameters, verbosity)
+            except Exception as e:
+                # 7073은 Specified tablespace <tablespace name> was not found를 의미합니다.
+                if '-7073' in e.args[1]:
+                    pass
+                else:
+                    raise
 
     def _destroy_test_user(self, cursor, parameters, verbosity):
         if verbosity >= 2:
@@ -362,7 +372,7 @@ class DatabaseCreation(BaseDatabaseCreation):
             )
             return True
         except DatabaseError as err:
-            description = str(err)
+            description = err.args[1]
             if acceptable_ora_err is None or acceptable_ora_err not in description:
                 raise
             return False
@@ -432,7 +442,9 @@ class DatabaseCreation(BaseDatabaseCreation):
         return self._test_settings_get("DATAFILE_TMP", default=tblspace)
 
     def _test_database_tblspace_maxsize(self):
-        return self._test_settings_get("DATAFILE_MAXSIZE", default="500M")
+        # TODO: 테스트 도중 DATAFILE이 가득 차서 예외가 발생했습니다.
+        #       일관성을 위해 DATAFILE_TMP_MAXSIZE 또한 크기를 조정하는 것을 생각하십시오.
+        return self._test_settings_get("DATAFILE_MAXSIZE", default="2000M")
 
     def _test_database_tblspace_tmp_maxsize(self):
         return self._test_settings_get("DATAFILE_TMP_MAXSIZE", default="500M")

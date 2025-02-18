@@ -1,7 +1,5 @@
 from django.db import DatabaseError, InterfaceError
 from django.db.backends.base.features import BaseDatabaseFeatures
-# TODO: 아래 import statement 삭제하기
-# from django.db.backends.oracle.oracledb_any import is_oracledb
 from django.utils.functional import cached_property
 
 
@@ -136,28 +134,30 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             },
         }
 
-        # TOOD: 티베로에 맞게 수정하기
-        if self.connection.oracle_version < (23,):
-            skips.update(
-                {
-                    "Raises ORA-00600 on Oracle < 23c: internal error code.": {
-                        "model_fields.test_jsonfield.TestQuerying."
-                        "test_usage_in_subquery",
-                    },
-                }
-            )
+        # TODO: 티베로에서는 스킵할 필요가 없을 수도 있으니 일단 테스트를 포함하게 했습니다.
+        #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
+        # if self.connection.oracle_version < (23,):
+        #     skips.update(
+        #         {
+        #             "Raises ORA-00600 on Oracle < 23c: internal error code.": {
+        #                 "model_fields.test_jsonfield.TestQuerying."
+        #                 "test_usage_in_subquery",
+        #             },
+        #         }
+        #     )
 
-        # TOOD: 티베로에 맞게 수정하기
-        if is_oracledb and self.connection.oracledb_version >= (2, 1, 2):
-            skips.update(
-                {
-                    "python-oracledb 2.1.2+ no longer hides 'ORA-1403: no data found' "
-                    "exceptions raised in database triggers.": {
-                        "backends.oracle.tests.TransactionalTests."
-                        "test_hidden_no_data_found_exception"
-                    },
-                },
-            )
+        # TODO: 티베로에서는 스킵할 필요가 없을 수도 있으니 일단 테스트를 포함하게 했습니다.
+        #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
+        # if is_oracledb and self.connection.oracledb_version >= (2, 1, 2):
+        #     skips.update(
+        #         {
+        #             "python-oracledb 2.1.2+ no longer hides 'ORA-1403: no data found' "
+        #             "exceptions raised in database triggers.": {
+        #                 "backends.oracle.tests.TransactionalTests."
+        #                 "test_hidden_no_data_found_exception"
+        #             },
+        #         },
+        #     )
         return skips
 
     @cached_property
@@ -172,15 +172,18 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "TimeField": "DateTimeField",
         }
 
-    @cached_property
-    def test_collations(self):
-        return {
-            "ci": "BINARY_CI",
-            "cs": "BINARY",
-            "non_default": "SWEDISH_CI",
-            "swedish_ci": "SWEDISH_CI",
-            "virtual": "SWEDISH_CI" if self.supports_collation_on_charfield else None,
-        }
+    # TODO: Tibero는 collate라는 keyword를 지원하지 않습니다.
+    #       test 도중 예외 발생을 막기 위해 일단 이 method를 주석처리했습니다.
+    #       나중에 어떻게 처리하면 좋을지 더 생각을 해야합니다.
+    # @cached_property
+    # def test_collations(self):
+    #     return {
+    #         "ci": "BINARY_CI",
+    #         "cs": "BINARY",
+    #         "non_default": "SWEDISH_CI",
+    #         "swedish_ci": "SWEDISH_CI",
+    #         "virtual": "SWEDISH_CI" if self.supports_collation_on_charfield else None,
+    #     }
 
     @cached_property
     def supports_collation_on_charfield(self):
@@ -194,32 +197,38 @@ class DatabaseFeatures(BaseDatabaseFeatures):
                 raise
             return True
 
-    # TOOD: 티베로에 맞게 수정하기
+    # TODO: 일단은 무조건 지원하게 했습니다.
+    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_primitives_in_json_field(self):
-        return self.connection.oracle_version >= (21,)
+        return self.connection.oracle_version >= (100,)
 
-    # TOOD: 티베로에 맞게 수정하기
+    # TODO: 일단은 무조건 지원하게 했습니다.
+    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_frame_exclusion(self):
-        return self.connection.oracle_version >= (21,)
+        return self.connection.oracle_version >= (1,)
 
-    # TOOD: 티베로에 맞게 수정하기
+    # TODO: 일단은 무조건 지원하게 했습니다.
+    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_boolean_expr_in_select_clause(self):
-        return self.connection.oracle_version >= (23,)
+        return self.connection.oracle_version >= (1,)
 
-    # TOOD: 티베로에 맞게 수정하기
+    # TODO: 일단은 무조건 지원하게 했습니다.
+    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_comparing_boolean_expr(self):
-        return self.connection.oracle_version >= (23,)
+        return self.connection.oracle_version >= (1,)
 
-    # TOOD: 티베로에 맞게 수정하기
+    # TODO: 일단은 무조건 지원하게 했습니다.
+    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_aggregation_over_interval_types(self):
-        return self.connection.oracle_version >= (23,)
+        return self.connection.oracle_version >= (1,)
 
-    # TOOD: 티베로에 맞게 수정하기
+    # TODO: 일단은 무조건 지원하게 했습니다.
+    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def bare_select_suffix(self):
-        return "" if self.connection.oracle_version >= (23,) else " FROM DUAL"
+        return " FROM DUAL"

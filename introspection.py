@@ -12,25 +12,49 @@ FieldInfo = namedtuple(
 )
 TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
 
+# TODO: 아래 상수들은 pyodbc에서 제공안하는 상수들입니다. 추측으로는 mssql odbc에서 제공하는 커스텀
+#       타입인 것으로 추측됩니다. 티베로에 맞게 코드를 고치기
+SQL_AUTOFIELD = -777555
+SQL_BIGAUTOFIELD = -777444
+SQL_SMALLAUTOFIELD = -777333
+SQL_TIMESTAMP_WITH_TIMEZONE = -155
 
 class DatabaseIntrospection(BaseDatabaseIntrospection):
     cache_bust_counter = 1
 
-    # TODO: Tibero7에 맞게 수정하기
+    # TODO: data_types_reverse의 값들은 mssql-django에서 그대로 가져왔습니다.
+    #       Tibero에 맞게 수정할 때 base.py의 DatabaseWrapper.data_type에 있는 타입과
+    #       일대일 매칭이 되도록 하기
     # Maps type objects to Django Field types.
     data_types_reverse = {
-        Database.DB_TYPE_DATE: "DateField",
-        Database.DB_TYPE_BINARY_DOUBLE: "FloatField",
-        Database.DB_TYPE_BLOB: "BinaryField",
-        Database.DB_TYPE_CHAR: "CharField",
-        Database.DB_TYPE_CLOB: "TextField",
-        Database.DB_TYPE_INTERVAL_DS: "DurationField",
-        Database.DB_TYPE_NCHAR: "CharField",
-        Database.DB_TYPE_NCLOB: "TextField",
-        Database.DB_TYPE_NVARCHAR: "CharField",
-        Database.DB_TYPE_NUMBER: "DecimalField",
-        Database.DB_TYPE_TIMESTAMP: "DateTimeField",
-        Database.DB_TYPE_VARCHAR: "CharField",
+        SQL_AUTOFIELD: 'AutoField',
+        SQL_BIGAUTOFIELD: 'BigAutoField',
+        SQL_SMALLAUTOFIELD: 'SmallAutoField',
+        Database.SQL_BIGINT: 'BigIntegerField',
+        # Database.SQL_BINARY:            ,
+        Database.SQL_BIT: 'BooleanField',
+        Database.SQL_CHAR: 'CharField',
+        Database.SQL_DECIMAL: 'DecimalField',
+        Database.SQL_DOUBLE: 'FloatField',
+        Database.SQL_FLOAT: 'FloatField',
+        Database.SQL_GUID: 'TextField',
+        Database.SQL_INTEGER: 'IntegerField',
+        Database.SQL_LONGVARBINARY: 'BinaryField',
+        # Database.SQL_LONGVARCHAR:       ,
+        Database.SQL_NUMERIC: 'DecimalField',
+        Database.SQL_REAL: 'FloatField',
+        Database.SQL_SMALLINT: 'SmallIntegerField',
+        Database.SQL_SS_TIME2: 'TimeField',
+        Database.SQL_TINYINT: 'SmallIntegerField',
+        Database.SQL_TYPE_DATE: 'DateField',
+        Database.SQL_TYPE_TIME: 'TimeField',
+        Database.SQL_TYPE_TIMESTAMP: 'DateTimeField',
+        SQL_TIMESTAMP_WITH_TIMEZONE: 'DateTimeField',
+        Database.SQL_VARBINARY: 'BinaryField',
+        Database.SQL_VARCHAR: 'TextField',
+        Database.SQL_WCHAR: 'CharField',
+        Database.SQL_WLONGVARCHAR: 'TextField',
+        Database.SQL_WVARCHAR: 'TextField',
     }
 
     def get_field_type(self, data_type, description):

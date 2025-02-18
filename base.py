@@ -5,7 +5,7 @@ Requires oracledb: https://oracle.github.io/python-oracledb/
 """
 
 import datetime
-import decimal
+import time
 import os
 import platform
 from contextlib import contextmanager
@@ -16,9 +16,21 @@ from django.db import IntegrityError
 from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.backends.utils import debug_transaction
 from django.utils.asyncio import async_unsafe
-from django.utils.encoding import force_bytes, force_str
 from django.utils.functional import cached_property
 from django.utils.version import get_version_tuple
+
+try:
+    import pyodbc as Database
+except ImportError as e:
+    raise ImproperlyConfigured("Error loading pyodbc module: %s" % e)
+
+pyodbc_ver = get_version_tuple(Database.version)
+if pyodbc_ver < (5, 0):
+    raise ImproperlyConfigured("pyodbc 5.0 or newer is required; you have %s" % Database.version)
+
+if hasattr(settings, 'DATABASE_CONNECTION_POOLING'):
+    if not settings.DATABASE_CONNECTION_POOLING:
+        Database.pooling = False
 
 def _setup_environment(environ):
     # Cygwin requires some special voodoo to set the environment variables
@@ -38,7 +50,6 @@ def _setup_environment(environ):
     else:
         os.environ.update(environ)
 
-
 # TODO: 환경 변수뿐만 아니라 settings.py를 통해 값을 받는 방식도 고려하기
 _setup_environment(
     [
@@ -46,42 +57,29 @@ _setup_environment(
         # Oracle takes client-side character set encoding from the environment.
         # ("NLS_LANG", ".AL32UTF8"),
 
-        # Tibero takes client-side character set encoding from the environment.
-        ('TB_NLS_LANG', '.UTF8'),
+        # pyodbc 5.0 이상을 사용할려면 libtbodbc의 환경변수인 TBCLI_WCHAR_TYPE을 UCS2로 설정
+        # 해야 합니다.
+        ('TBCLI_WCHAR_TYPE', 'UCS2'),
 
-    # TODO: 티베로에서는 없는 변수인 것 같습니다. 아래 주석 삭제하기
+    # TODO: Tibero에는 없는 변수인 것 같습니다. 아래 주석 삭제하기
         # This prevents Unicode from getting mangled by getting encoded into the
         # potentially non-Unicode database character set.
         # ("ORA_NCHAR_LITERAL_REPLACE", "TRUE"),
     ]
 )
 
-try:
-    import pyodbc as Database
-except ImportError as e:
-    raise ImproperlyConfigured("Error loading pyodbc module: %s" % e)
-
-pyodbc_ver = get_version_tuple(Database.version)
-if pyodbc_ver < (3, 0):
-    raise ImproperlyConfigured("pyodbc 3.0 or newer is required; you have %s" % Database.version)
-
-if hasattr(settings, 'DATABASE_CONNECTION_POOLING'):
-    if not settings.DATABASE_CONNECTION_POOLING:
-        Database.pooling = False
-
 # Some of these import oracledb, so import them after checking if it's
 # installed.
-from .client import DatabaseClient  # NOQA
-from .creation import DatabaseCreation  # NOQA
-from .features import DatabaseFeatures  # NOQA
-from .introspection import DatabaseIntrospection  # NOQA
-from .operations import DatabaseOperations  # NOQA
-from .schema import DatabaseSchemaEditor  # NOQA
-from .utils import Oracle_datetime, dsn  # NOQA
-from .validation import DatabaseValidation  # NOQA
+from .client import DatabaseClient # noqa
+from .creation import DatabaseCreation  # noqa
+from .features import DatabaseFeatures  # noqa
+from .introspection import DatabaseIntrospection  # noqa
+from .operations import DatabaseOperations  # noqa
+from .schema import DatabaseSchemaEditor  # noqa
+from .utils import encode_connection_string  # noqa
+from .validation import DatabaseValidation  # noqa
 
-
-# TODO: tibero와 pyodbc에 맞게 수정하기
+# TODO: Tibero에 맞게 에러 코드 고치기
 @contextmanager
 def wrap_oracle_errors():
     try:
@@ -108,6 +106,33 @@ def wrap_oracle_errors():
         raise
 
 
+def handle_interval_day_to_second(dto: bytes):
+    interval_str = dto.decode()
+    days, time_str = interval_str.split()
+
+    days = int(days)
+    hours, minutes, rest = time_str.split(":")
+    hours = int(hours)
+    minutes = int(minutes)
+
+    if "." in rest:
+        seconds, microseconds = map(int, rest.split("."))
+    else:
+        seconds = int(rest)
+        microseconds = 0
+
+    # timedelta 객체 생성
+    return datetime.timedelta(
+        days=days,
+        hours=hours,
+        minutes=minutes,
+        seconds=seconds,
+        microseconds=microseconds,
+    )
+
+
+# TODO: Tibero 6와 7 모두 같은 operators 사용가능하다면 이 클래스는 필요없어지게 됩니다.
+#       필요없는 것이 확인되면 삭제하기
 class _UninitializedOperatorsDescriptor:
     def __get__(self, instance, cls=None):
         # If connection.operators is looked up before a connection has been
@@ -165,7 +190,9 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     }
     data_type_check_constraints = {
         "BooleanField": "%(qn_column)s IN (0,1)",
-        "JSONField": "%(qn_column)s IS JSON",
+        # TODO: tibero 6/7에서 json 정합성 검사를 어떻게 해야할지 고민해야 합니다.
+        #       CHECK(... IS JSON) 형식을 6와 7에서 지원을 하지 않습니다.
+        # "JSONField": "%(qn_column)s IS JSON",
         "PositiveBigIntegerField": "%(qn_column)s >= 0",
         "PositiveIntegerField": "%(qn_column)s >= 0",
         "PositiveSmallIntegerField": "%(qn_column)s >= 0",
@@ -177,6 +204,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     operators = _UninitializedOperatorsDescriptor()
 
+    # TODO: Tibero 6와 Tibero 7 모두 지원되는 operator를 가지고 있는지 확인하기
+    #       만약 6와 7 모두 지원안되는 operator를 가지고 있다면 _standard_operators를 수정하거나
+    #       _likec_operators 처럼 과거 버전에 호환되는 dictionary를 만들기
+    #       호환을 위해 사용되는 _likec_operators의 예시는 init_connection_state() 메서드를 참고하기
     _standard_operators = {
         "exact": "= %s",
         "iexact": "= UPPER(%s)",
@@ -207,6 +238,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         ),
     }
 
+    # TODO: Tibero에서 LIKEC가 지원안됩니다. Tibero 6와 7 모두 standard_operator를 지원한다면
+    #       아래 _likec_operators, _likec_pattern_ops 코드는 삭제해도 됩니다.
     _likec_operators = {
         **_standard_operators,
         "contains": "LIKEC %s ESCAPE '\\'",
@@ -261,23 +294,91 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         )
         self.features.can_return_columns_from_insert = use_returning_into
 
+        # opts = self.settings_dict["OPTIONS"]
+
+        # TODO: mssql에서 가져온 코드인데 tibero에서도 쓸모가 있는지 확인되면 추가하기
+        #      _on_error() 코드도 참고해서 wrap_oracle_errors()의 내용을 수정해야
+        #      합니다.
+        # interval to wait for recovery from network error
+        # interval = opts.get('connection_recovery_interval_msec', 0.0)
+        # self.connection_recovery_interval_msec = float(interval) / 1000
+
     def get_database_version(self):
         return self.oracle_version
 
+    # TODO: Tibero ODBC 중에 returning into를 지원하는 버전이 있다. 지원 가능한 버전일 경우
+    #       사용가능하다록 만들기
+    # TODO: setting에 불가능한 조합이 있다면 예외 발생시키기 (mssql, oracle, postgresql 참고하기)
     def get_connection_params(self):
-        conn_params = self.settings_dict["OPTIONS"].copy()
-        if "use_returning_into" in conn_params:
-            del conn_params["use_returning_into"]
-        return conn_params
+        # conn_params = self.settings_dict["OPTIONS"].copy()
+        # if "use_returning_into" in conn_params:
+        #     del conn_params["use_returning_into"]
+        # return conn_params
+        return self.settings_dict.copy()
 
     @async_unsafe
     def get_new_connection(self, conn_params):
-        return Database.connect(
-            user=self.settings_dict["USER"],
-            password=self.settings_dict["PASSWORD"],
-            dsn=dsn(self.settings_dict),
-            **conn_params,
+        options = conn_params.get('OPTIONS', {})
+        cstr_parts = {
+            'DRIVER': options.get('driver', None),
+            'DSN': options.get('dsn', None),
+            
+            'Server': conn_params.get('HOST', None),
+            'Database': conn_params.get('NAME', None),
+            'Port': conn_params.get('PORT', None),
+
+            'User': conn_params.get('USER', None),
+            'Password': conn_params.get('PASSWORD', None),
+        }
+        # 값이 None인 항목을 딕셔너리에서 제거 (불필요한 연결 문자열 요소 제거)
+        cstr_parts = { k: v for k, v in cstr_parts.items() if v is not None }
+
+        connstr = encode_connection_string(cstr_parts)
+
+        # extra_params are glued on the end of the string without encoding,
+        # so it's up to the settings writer to make sure they're appropriate -
+        # use encode_connection_string if constructing from external input.
+        if options.get('extra_params', None):
+            connstr += ';' + options['extra_params']
+
+        timeout = options.get('connection_timeout', 0)
+        retries = options.get('connection_retries', 5)
+        backoff_time = options.get('connection_retry_backoff_time', 5)
+        query_timeout = options.get('query_timeout', 0)
+        setencoding = options.get('setencoding', None)
+        setdecoding = options.get('setdecoding', None)
+
+        conn = None
+        retry_count = 0
+        while conn is None:
+            try:
+                conn = Database.connect(connstr, timeout=timeout)
+            except Exception as e:
+                # TODO: mssql의 경우 mssql server에서 pyodbc로 전달되는 error code에 따라
+                #       retry를 하는 경우와 안하는 경우로 나뉘어집니다. 티베로의 경우 현재 개발자 (전영배)가
+                #       제공되는 에러 코드가 완전히 파악이 되지 않은 상태여서 모든 예외 상황에 retry를 하도록
+                #       했습니다.
+                if retry_count < retries:
+                    time.sleep(backoff_time)
+                    retry_count = retry_count + 1
+                else:
+                    raise
+
+        # Handling values from 'INTERVAL DAY TO SECOND' columns
+        # source: https://github.com/mkleehammer/pyodbc/wiki/Using-an-Output-Converter-function
+        conn.add_output_converter(
+            Database.SQL_INTERVAL_DAY_TO_SECOND,
+            handle_interval_day_to_second
         )
+
+        conn.timeout = query_timeout
+        if setencoding:
+            for entry in setencoding:
+                conn.setencoding(**entry)
+        if setdecoding:
+            for entry in setdecoding:
+                conn.setdecoding(**entry)
+        return conn
 
     def init_connection_state(self):
         super().init_connection_state()
@@ -318,16 +419,14 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 self.operators = self._standard_operators
                 self.pattern_ops = self._standard_pattern_ops
             cursor.close()
-        self.connection.stmtcachesize = 20
+
         # Ensure all changes are preserved even when AUTOCOMMIT is False.
         if not self.get_autocommit():
             self.commit()
 
     @async_unsafe
     def create_cursor(self, name=None):
-        # TODO: pyodbc를 사용한 tibero의 경우 이미 FormatStylePlaceHolderCursor를 지원합니다.
-        #       mssql-django를 참고해서 클래스를 변경해야 합니다.
-        return FormatStylePlaceholderCursor(self.connection, self)
+        return CursorWrapper(self.connection.cursor(), self)
 
     def _commit(self):
         if self.connection is not None:
@@ -357,284 +456,126 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         with self.cursor() as cursor:
             # TODO: 아래 코드는 Tibero에서 작동안하는 sql statements입니다.
             #       어떻게 해결해야할지 고민하기
+            #       어쩌면 mysql의 check_constraints() 방법을 사용할 수도 있을 것 같습니다.
             cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
             cursor.execute("SET CONSTRAINTS ALL DEFERRED")
 
     def is_usable(self):
         try:
-            self.connection.ping()
+            self.create_cursor().execute("SELECT 1" + self.features.bare_select_suffix)
         except Database.Error:
             return False
         else:
             return True
-    # TODO: pyodbc와 Tibero에 맞게 변경하기
+
     @cached_property
     def oracle_version(self):
-        with self.temporary_connection():
-            return tuple(int(x) for x in self.connection.version.split("."))
+        with self.temporary_connection() as cursor:
+            cursor.execute("SELECT * FROM V$VERSION")
+            version_dict = {key: value for key, value, _ in cursor}
 
-    # TODO: pyodbc와 Tibero에 맞게 변경하기
+            # TODO: Tibero 7의 PRODUCT_MINOR가 ' '처럼 space 하나인 경우가 있는데
+            #       왜 그런지 모르겠습니다. 티베로 버그인지 찾아보기
+            #       아래의 ".strip() or 0"은 이 이상한 현상으로 인해 생기는 문제를 해결하는
+            #       임시 코드입니다.
+            product_major = version_dict.get('PRODUCT_MAJOR')
+            product_minor = version_dict.get('PRODUCT_MINOR').strip() or 0
+            return int(product_major), int(product_minor)
+
+    # TODO: pyodbc 버전만 지원할 예정이기 때문에 필요없는 method일 수도 있습니다.
+    #       이 메서드를 사용하는 features.py를 참고해서 지울지 결정하기
     @cached_property
     def oracledb_version(self):
-        return get_version_tuple(Database.__version__)
+        # 처음엔 libtbodbc의 버전을 반환하는게 맞다고 생각했습니다. 그런데 생각해보니 libtbodbc의
+        # 버전이 다르게 해도 pyodbc의 행동을 변경할 수 있는 것이 아닙니다. 오히려 pyodbc 버전을
+        # 다르게 해야 기본 설정이 달라지기 때문에 pyodbc 버전 반환을 하게 되었습니다.
+        return Database.version
 
-# TODO: pyodbc를 사용하는 mssql-django를 보아 Tibero 또한 OracleParam과 VariableWrapper
-#       클래스가 필요없어 보입니다.
-class OracleParam:
+
+class CursorWrapper:
     """
-    Wrapper object for formatting parameters for Oracle. If the string
-    representation of the value is large enough (greater than 4000 characters)
-    the input size needs to be set as CLOB. Alternatively, if the parameter
-    has an `input_size` attribute, then the value of the `input_size` attribute
-    will be used instead. Otherwise, no input size will be set for the
-    parameter when executing the query.
+    A wrapper around the pyodbc's cursor that takes in account a) some pyodbc
+    DB-API 2.0 implementation and b) some common ODBC driver particularities.
     """
 
-    def __init__(self, param, cursor, strings_only=False):
-        # With raw SQL queries, datetimes can reach this function
-        # without being converted by DateTimeField.get_db_prep_value.
-        if settings.USE_TZ and (
-            isinstance(param, datetime.datetime)
-            and not isinstance(param, Oracle_datetime)
-        ):
-            param = Oracle_datetime.from_datetime(param)
-
-        string_size = 0
-        has_boolean_data_type = (
-            cursor.database.features.supports_boolean_expr_in_select_clause
-        )
-        if not has_boolean_data_type:
-            # Oracle < 23c doesn't recognize True and False correctly.
-            if param is True:
-                param = 1
-            elif param is False:
-                param = 0
-        if hasattr(param, "bind_parameter"):
-            self.force_bytes = param.bind_parameter(cursor)
-        elif isinstance(param, (Database.Binary, datetime.timedelta)):
-            self.force_bytes = param
-        else:
-            # To transmit to the database, we need Unicode if supported
-            # To get size right, we must consider bytes.
-            self.force_bytes = force_str(param, cursor.charset, strings_only)
-            if isinstance(self.force_bytes, str):
-                # We could optimize by only converting up to 4000 bytes here
-                string_size = len(force_bytes(param, cursor.charset, strings_only))
-        if hasattr(param, "input_size"):
-            # If parameter has `input_size` attribute, use that.
-            self.input_size = param.input_size
-        elif string_size > 4000:
-            # Mark any string param greater than 4000 characters as a CLOB.
-            self.input_size = Database.DB_TYPE_CLOB
-        elif isinstance(param, datetime.datetime):
-            self.input_size = Database.DB_TYPE_TIMESTAMP
-        elif has_boolean_data_type and isinstance(param, bool):
-            self.input_size = Database.DB_TYPE_BOOLEAN
-        else:
-            self.input_size = None
-
-
-class VariableWrapper:
-    """
-    An adapter class for cursor variables that prevents the wrapped object
-    from being converted into a string when used to instantiate an OracleParam.
-    This can be used generally for any other object that should be passed into
-    Cursor.execute as-is.
-    """
-
-    def __init__(self, var):
-        self.var = var
-
-    def bind_parameter(self, cursor):
-        return self.var
-
-    def __getattr__(self, key):
-        return getattr(self.var, key)
-
-    def __setattr__(self, key, value):
-        if key == "var":
-            self.__dict__[key] = value
-        else:
-            setattr(self.var, key, value)
-
-
-class FormatStylePlaceholderCursor:
-    """
-    Django uses "format" (e.g. '%s') style placeholders, but Oracle uses ":var"
-    style. This fixes it -- but note that if you want to use a literal "%s" in
-    a query, you'll need to use "%%s".
-    """
-
-    charset = "utf-8"
-
-    def __init__(self, connection, database):
-        self.cursor = connection.cursor()
-        self.cursor.outputtypehandler = self._output_type_handler
-        self.database = database
-
-    @staticmethod
-    def _output_number_converter(value):
-        return decimal.Decimal(value) if "." in value else int(value)
-
-    @staticmethod
-    def _get_decimal_converter(precision, scale):
-        if scale == 0:
-            return int
-        context = decimal.Context(prec=precision)
-        quantize_value = decimal.Decimal(1).scaleb(-scale)
-        return lambda v: decimal.Decimal(v).quantize(quantize_value, context=context)
-
-    @staticmethod
-    def _output_type_handler(cursor, name, defaultType, length, precision, scale):
-        """
-        Called for each db column fetched from cursors. Return numbers as the
-        appropriate Python type, and NCLOB with JSON as strings.
-        """
-        if defaultType == Database.NUMBER:
-            if scale == -127:
-                if precision == 0:
-                    # NUMBER column: decimal-precision floating point.
-                    # This will normally be an integer from a sequence,
-                    # but it could be a decimal value.
-                    outconverter = FormatStylePlaceholderCursor._output_number_converter
-                else:
-                    # FLOAT column: binary-precision floating point.
-                    # This comes from FloatField columns.
-                    outconverter = float
-            elif precision > 0:
-                # NUMBER(p,s) column: decimal-precision fixed point.
-                # This comes from IntegerField and DecimalField columns.
-                outconverter = FormatStylePlaceholderCursor._get_decimal_converter(
-                    precision, scale
-                )
-            else:
-                # No type information. This normally comes from a
-                # mathematical expression in the SELECT list. Guess int
-                # or Decimal based on whether it has a decimal point.
-                outconverter = FormatStylePlaceholderCursor._output_number_converter
-            return cursor.var(
-                Database.STRING,
-                size=255,
-                arraysize=cursor.arraysize,
-                outconverter=outconverter,
-            )
-        # oracledb 2.0.0+ returns NLOB columns with IS JSON constraints as
-        # dicts. Use a no-op converter to avoid this.
-        elif defaultType == Database.DB_TYPE_NCLOB:
-            return cursor.var(Database.DB_TYPE_NCLOB, arraysize=cursor.arraysize)
-
-    def _format_params(self, params):
-        try:
-            return {k: OracleParam(v, self, True) for k, v in params.items()}
-        except AttributeError:
-            return tuple(OracleParam(p, self, True) for p in params)
-
-    def _guess_input_sizes(self, params_list):
-        # Try dict handling; if that fails, treat as sequence
-        if hasattr(params_list[0], "keys"):
-            sizes = {}
-            for params in params_list:
-                for k, value in params.items():
-                    if value.input_size:
-                        sizes[k] = value.input_size
-            if sizes:
-                self.setinputsizes(**sizes)
-        else:
-            # It's not a list of dicts; it's a list of sequences
-            sizes = [None] * len(params_list[0])
-            for params in params_list:
-                for i, value in enumerate(params):
-                    if value.input_size:
-                        sizes[i] = value.input_size
-            if sizes:
-                self.setinputsizes(*sizes)
-
-    def _param_generator(self, params):
-        # Try dict handling; if that fails, treat as sequence
-        if hasattr(params, "items"):
-            return {k: v.force_bytes for k, v in params.items()}
-        else:
-            return [p.force_bytes for p in params]
-
-    def _fix_for_params(self, query, params, unify_by_values=False):
-        # oracledb wants no trailing ';' for SQL statements.  For PL/SQL, it
-        # it does want a trailing ';' but not a trailing '/'.  However, these
-        # characters must be included in the original query in case the query
-        # is being passed to SQL*Plus.
-        if query.endswith(";") or query.endswith("/"):
-            query = query[:-1]
-        if params is None:
-            params = []
-        elif hasattr(params, "keys"):
-            # Handle params as dict
-            args = {k: ":%s" % k for k in params}
-            query %= args
-        elif unify_by_values and params:
-            # Handle params as a dict with unified query parameters by their
-            # values. It can be used only in single query execute() because
-            # executemany() shares the formatted query with each of the params
-            # list. e.g. for input params = [0.75, 2, 0.75, 'sth', 0.75]
-            # params_dict = {
-            #     (float, 0.75): ':arg0',
-            #     (int, 2): ':arg1',
-            #     (str, 'sth'): ':arg2',
-            # }
-            # args = [':arg0', ':arg1', ':arg0', ':arg2', ':arg0']
-            # params = {':arg0': 0.75, ':arg1': 2, ':arg2': 'sth'}
-            # The type of parameters in param_types keys is necessary to avoid
-            # unifying 0/1 with False/True.
-            param_types = [(type(param), param) for param in params]
-            params_dict = {
-                param_type: ":arg%d" % i
-                for i, param_type in enumerate(dict.fromkeys(param_types))
-            }
-            args = [params_dict[param_type] for param_type in param_types]
-            params = {
-                placeholder: param for (_, param), placeholder in params_dict.items()
-            }
-            query %= tuple(args)
-        else:
-            # Handle params as sequence
-            args = [(":arg%d" % i) for i in range(len(params))]
-            query %= tuple(args)
-        return query, self._format_params(params)
-
-    def execute(self, query, params=None):
-        query, params = self._fix_for_params(query, params, unify_by_values=True)
-        self._guess_input_sizes([params])
-        with wrap_oracle_errors():
-            return self.cursor.execute(query, self._param_generator(params))
-
-    def executemany(self, query, params=None):
-        if not params:
-            # No params given, nothing to do
-            return None
-        # uniform treatment for sequences and iterables
-        params_iter = iter(params)
-        query, firstparams = self._fix_for_params(query, next(params_iter))
-        # we build a list of formatted params; as we're going to traverse it
-        # more than once, we can't make it lazy by using a generator
-        formatted = [firstparams] + [self._format_params(p) for p in params_iter]
-        self._guess_input_sizes(formatted)
-        with wrap_oracle_errors():
-            return self.cursor.executemany(
-                query, [self._param_generator(p) for p in formatted]
-            )
+    def __init__(self, cursor, connection):
+        self.active = True
+        self.cursor = cursor
+        self.connection = connection
 
     def close(self):
-        try:
+        if self.active:
+            self.active = False
             self.cursor.close()
-        except Database.InterfaceError:
-            # already closed
-            pass
 
-    def var(self, *args):
-        return VariableWrapper(self.cursor.var(*args))
+    def _format_sql(self, sql, params):
+        # pyodbc uses '?' instead of '%s' as parameter placeholder.
+        if params is not () and params != []:
+            sql = sql % tuple('?' * len(params))
+        return sql
 
-    def arrayvar(self, *args):
-        return VariableWrapper(self.cursor.arrayvar(*args))
+    def _fix_params(self, params):
+        """
+        pyodbc와 Django과 함께 잘 작동을 할려면 cursor.execute()하기 전에 파라미터의 타입과 값을
+        변경해야 하는 일이 있습니다. 그런데 SQLAlchemy와 다르게 cursor.execute() 이전에 값을
+        변경하는 방법을 제공하지 않는 것 같습니다. 따라서 이 메서드를 따로 구현했습니다. 다만
+        SQLAlchemy와 다르게 Django에서는 모든 파라미터를 iterating 하기때문에 성능상 저하기 될 수
+        있습니다.
+        """
+        new_params = []
+        for param in params:
+            # tbcli의 현재 구현에는 SQL_C_TIMESTAMP의 microseconds를 입력 받지 못하는 버그가
+            # 있는 것 같습니다. 이 문제를 우회하기 위해 SQLAlchemy-Tibero처럼 입력값을 str으로
+            # 주었습니다.
+            if isinstance(param, datetime.datetime):
+                new_params.append(str(param))
+
+            # pyodbc는 timedelta를 지원하지 않습니다. Django의 DurationField같은 타입을 지원하기
+            # 위해서는 timedelta 타입을 문자열로 변경해야 합니다.
+            elif isinstance(param, datetime.timedelta):
+                # timedelta에서 days, seconds, microseconds 추출
+                days = param.days
+                seconds = param.seconds
+
+                # 시, 분, 초로 변환
+                h = seconds // 3600
+                m = (seconds % 3600) // 60
+                s = seconds % 60
+                ms = param.microseconds
+
+                # 마이크로초를 소수점 이하 6자리로 변환
+                new_params.append(f"{days} {h}:{m}:{s}.{ms:06}")
+            else:
+                new_params.append(param)
+
+        return new_params
+
+    def execute(self, sql, params=()):
+        sql = self._format_sql(sql, params)
+        params = self._fix_params(params)
+        with wrap_oracle_errors():
+            return self.cursor.execute(sql, params)
+
+    def executemany(self, sql, params_list=()):
+        if not params_list:
+            return None
+        sql = self._format_sql(sql, params_list[0])
+        params_list = self._fix_params(params_list)
+        with wrap_oracle_errors():
+            return self.cursor.executemany(sql, params_list)
+
+    def fetchone(self):
+        return self.cursor.fetchone()
+
+    def fetchmany(self, chunk):
+        return self.cursor.fetchmany(chunk)
+
+    def fetchall(self):
+        return self.cursor.fetchall()
 
     def __getattr__(self, attr):
+        if attr in self.__dict__:
+            return self.__dict__[attr]
         return getattr(self.cursor, attr)
 
     def __iter__(self):
