@@ -1,4 +1,4 @@
-from django.db import DatabaseError, InterfaceError
+from django.db import DatabaseError, ProgrammingError
 from django.db.backends.base.features import BaseDatabaseFeatures
 from django.utils.functional import cached_property
 
@@ -38,7 +38,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     nulls_order_largest = True
     requires_literal_defaults = True
     supports_default_keyword_in_bulk_insert = False
-    closed_cursor_error_class = InterfaceError
+    closed_cursor_error_class = ProgrammingError
     # Select for update with limit can be achieved on Oracle, but not with the
     # current backend.
     supports_select_for_update_with_limit = False
@@ -70,6 +70,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     """
     supports_callproc_kwargs = True
     supports_over_clause = True
+    supports_paramstyle_pyformat = False
     supports_frame_range_fixed_distance = True
     supports_ignore_conflicts = False
     max_query_params = 2**16 - 1

@@ -79,12 +79,16 @@ from .schema import DatabaseSchemaEditor  # noqa
 from .utils import encode_connection_string  # noqa
 from .validation import DatabaseValidation  # noqa
 
-# TODO: Tibero에 맞게 에러 코드 고치기
 @contextmanager
 def wrap_oracle_errors():
     try:
         yield
-    except Database.DatabaseError as e:
+    except Database.Error as e:
+        if '-7102' in e.args[1]:
+            raise Database.DatabaseError(e.args[0], e.args[1])
+        else:
+            raise
+        # TODO: 아래 코드는 나중에 고치기
         # oracledb raises a oracledb.DatabaseError exception with the
         # following attributes and values:
         #  code = 2091
@@ -104,7 +108,6 @@ def wrap_oracle_errors():
         ):
             raise IntegrityError(*tuple(e.args))
         raise
-
 
 def handle_interval_day_to_second(dto: bytes):
     interval_str = dto.decode()
@@ -448,17 +451,17 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         with self.wrap_database_errors:
             self.connection.autocommit = autocommit
 
-    def check_constraints(self, table_names=None):
-        """
-        Check constraints by setting them to immediate. Return them to deferred
-        afterward.
-        """
-        with self.cursor() as cursor:
-            # TODO: 아래 코드는 Tibero에서 작동안하는 sql statements입니다.
-            #       어떻게 해결해야할지 고민하기
-            #       어쩌면 mysql의 check_constraints() 방법을 사용할 수도 있을 것 같습니다.
-            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
-            cursor.execute("SET CONSTRAINTS ALL DEFERRED")
+    # def check_constraints(self, table_names=None):
+    #     """
+    #     Check constraints by setting them to immediate. Return them to deferred
+    #     afterward.
+    #     """
+    #     with self.cursor() as cursor:
+    #         # TODO: 아래 코드는 Tibero에서 작동안하는 sql statements입니다.
+    #         #       어떻게 해결해야할지 고민하기
+    #         #       어쩌면 mysql의 check_constraints() 방법을 사용할 수도 있을 것 같습니다.
+    #         cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    #         cursor.execute("SET CONSTRAINTS ALL DEFERRED")
 
     def is_usable(self):
         try:
@@ -559,19 +562,24 @@ class CursorWrapper:
     def executemany(self, sql, params_list=()):
         if not params_list:
             return None
-        sql = self._format_sql(sql, params_list[0])
-        params_list = self._fix_params(params_list)
+        # 유저가 sequence가 아닌 generator을 params_list에 넘겨주는 경우가 있습니다.
+        raw_params_list = [p for p in params_list]
+        sql = self._format_sql(sql, raw_params_list[0])
+        fixed_params_list = self._fix_params(raw_params_list)
         with wrap_oracle_errors():
-            return self.cursor.executemany(sql, params_list)
+            return self.cursor.executemany(sql, fixed_params_list)
 
     def fetchone(self):
-        return self.cursor.fetchone()
+        row = self.cursor.fetchone()
+        if row is not None:
+            row = tuple(row)
+        return row
 
     def fetchmany(self, chunk):
-        return self.cursor.fetchmany(chunk)
+        return list(map(tuple, self.cursor.fetchmany(chunk)))
 
     def fetchall(self):
-        return self.cursor.fetchall()
+        return list(map(tuple, self.cursor.fetchall()))
 
     def __getattr__(self, attr):
         if attr in self.__dict__:
