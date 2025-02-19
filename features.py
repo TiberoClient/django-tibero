@@ -147,18 +147,15 @@ class DatabaseFeatures(BaseDatabaseFeatures):
         #         }
         #     )
 
-        # TODO: 티베로에서는 스킵할 필요가 없을 수도 있으니 일단 테스트를 포함하게 했습니다.
-        #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
-        # if is_oracledb and self.connection.oracledb_version >= (2, 1, 2):
-        #     skips.update(
-        #         {
-        #             "python-oracledb 2.1.2+ no longer hides 'ORA-1403: no data found' "
-        #             "exceptions raised in database triggers.": {
-        #                 "backends.oracle.tests.TransactionalTests."
-        #                 "test_hidden_no_data_found_exception"
-        #             },
-        #         },
-        #     )
+        skips.update(
+            {
+                "pyodbc does not hide '-15104: no data found' "
+                "exceptions raised in database triggers.": {
+                    "backends.oracle.tests.TransactionalTests."
+                    "test_hidden_no_data_found_exception"
+                },
+            },
+        )
         return skips
 
     @cached_property
@@ -186,17 +183,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     #         "virtual": "SWEDISH_CI" if self.supports_collation_on_charfield else None,
     #     }
 
-    @cached_property
-    def supports_collation_on_charfield(self):
-        sql = "SELECT CAST('a' AS VARCHAR2(4001))" + self.bare_select_suffix
-        with self.connection.cursor() as cursor:
-            try:
-                cursor.execute(sql)
-            except DatabaseError as e:
-                if e.args[0].code == 910:
-                    return False
-                raise
-            return True
+    # Tibero 6/7 sql reference을 참고하면 collation keyword 자체가 없습니다.
+    supports_collation_on_charfield = False
 
     # TODO: 일단은 무조건 지원하게 했습니다.
     #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
