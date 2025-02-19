@@ -61,6 +61,13 @@ _setup_environment(
         # 해야 합니다.
         ('TBCLI_WCHAR_TYPE', 'UCS2'),
 
+        # returning into clause 지원을 위해 필요한 환경변수
+        # TODO: 현재 django에서 지원하는 oracle backend의 설정인 use_returning_into는 문제가 있습니다.
+        #       django 개발자와 대화한 결과 이 설정은 deprecated된 가능성이 높습니다. 그에 맞게 티베로에서도
+        #       use_returning_into 설정 및 관련 코드를 삭제해야 합니다.
+        #       refs: https://code.djangoproject.com/ticket/36189
+        ('TBCLI_COMPAT_ALCHEMY', 'YES'),
+
     # TODO: Tibero에는 없는 변수인 것 같습니다. 아래 주석 삭제하기
         # This prevents Unicode from getting mangled by getting encoded into the
         # potentially non-Unicode database character set.
