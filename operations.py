@@ -218,9 +218,7 @@ END;
         internal_type = expression.output_field.get_internal_type()
         # if internal_type in ["JSONField", "TextField"]:
         #     converters.append(self.convert_textfield_value)
-        if internal_type == "BinaryField":
-            converters.append(self.convert_binaryfield_value)
-        elif internal_type == "BooleanField":
+        if internal_type == "BooleanField":
             converters.append(self.convert_booleanfield_value)
         elif internal_type == "DateTimeField":
             if settings.USE_TZ:
@@ -241,11 +239,6 @@ END;
                 else self.convert_empty_string
             )
         return converters
-
-    def convert_binaryfield_value(self, value, expression, connection):
-        if isinstance(value, Database.LOB):
-            value = force_bytes(value.read())
-        return value
 
     def convert_booleanfield_value(self, value, expression, connection):
         if value in (0, 1):
@@ -309,11 +302,6 @@ END;
         # Just return sql when there are no parameters.
         else:
             return sql
-
-    def last_insert_id(self, cursor, table_name, pk_name):
-        sq_name = self._get_sequence_name(cursor, strip_quotes(table_name), pk_name)
-        cursor.execute('SELECT "%s".currval FROM DUAL' % sq_name)
-        return cursor.fetchone()[0]
 
     def lookup_cast(self, lookup_type, internal_type=None):
         if lookup_type in ("iexact", "icontains", "istartswith", "iendswith"):
@@ -627,45 +615,39 @@ END;
         name_length = self.max_name_length() - 3
         return "%s_SQ" % truncate_name(strip_quotes(table), name_length).upper()
 
-    def _get_sequence_name(self, cursor, table, pk_name):
-        cursor.execute(
-            """
-            SELECT sequence_name
-            FROM user_tab_identity_cols
-            WHERE table_name = UPPER(%s)
-            AND column_name = UPPER(%s)""",
-            [table, pk_name],
-        )
-        row = cursor.fetchone()
-        return self._get_no_autofield_sequence_name(table) if row is None else row[0]
-
     def bulk_insert_sql(self, fields, placeholder_rows):
-        field_placeholders = [
-            BulkInsertMapper.types.get(
-                getattr(field, "target_field", field).get_internal_type(), "%s"
-            )
-            for field in fields
-            if field
-        ]
-        query = []
-        for row in placeholder_rows:
-            select = []
-            for i, placeholder in enumerate(row):
-                # A model without any fields has fields=[None].
-                if fields[i]:
-                    placeholder = field_placeholders[i] % placeholder
-                # Add columns aliases to the first select to avoid "ORA-00918:
-                # column ambiguously defined" when two or more columns in the
-                # first select have the same value.
-                if not query:
-                    placeholder = "%s col_%s" % (placeholder, i)
-                select.append(placeholder)
-            suffix = self.connection.features.bare_select_suffix
-            query.append(f"SELECT %s{suffix}" % ", ".join(select))
-        # Bulk insert to tables with Oracle identity columns causes Oracle to
-        # add sequence.nextval to it. Sequence.nextval cannot be used with the
-        # UNION operator. To prevent incorrect SQL, move UNION to a subquery.
-        return "SELECT * FROM (%s)" % " UNION ALL ".join(query)
+        placeholder_rows_sql = (", ".join(row) for row in placeholder_rows)
+        values_sql = ", ".join("(%s)" % sql for sql in placeholder_rows_sql)
+        return "VALUES " + values_sql
+
+    # TODO: 위의 bulk_insert_sql은 mssql에서 가져온 내용이고 아래는 oracle 코드에서 가져온 것이다. 서로 차이점이 뭔지 알아보기
+    # def bulk_insert_sql(self, fields, placeholder_rows):
+    #     field_placeholders = [
+    #         BulkInsertMapper.types.get(
+    #             getattr(field, "target_field", field).get_internal_type(), "%s"
+    #         )
+    #         for field in fields
+    #         if field
+    #     ]
+    #     query = []
+    #     for row in placeholder_rows:
+    #         select = []
+    #         for i, placeholder in enumerate(row):
+    #             # A model without any fields has fields=[None].
+    #             if fields[i]:
+    #                 placeholder = field_placeholders[i] % placeholder
+    #             # Add columns aliases to the first select to avoid "ORA-00918:
+    #             # column ambiguously defined" when two or more columns in the
+    #             # first select have the same value.
+    #             if not query:
+    #                 placeholder = "%s col_%s" % (placeholder, i)
+    #             select.append(placeholder)
+    #         suffix = self.connection.features.bare_select_suffix
+    #         query.append(f"SELECT %s{suffix}" % ", ".join(select))
+    #     # Bulk insert to tables with Oracle identity columns causes Oracle to
+    #     # add sequence.nextval to it. Sequence.nextval cannot be used with the
+    #     # UNION operator. To prevent incorrect SQL, move UNION to a subquery.
+    #     return "SELECT * FROM (%s)" % " UNION ALL ".join(query)
 
     def subtract_temporals(self, internal_type, lhs, rhs):
         if internal_type == "DateField":
