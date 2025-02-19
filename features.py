@@ -28,6 +28,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     has_native_duration_field = True
     can_defer_constraint_checks = True
     supports_partially_nullable_unique_constraints = False
+    # TODO: Tibero에서는 지원하는데 이 기능을 테스트하는 django 코드에서 SET CONSTRAINT ... IMMEDIATE 구문을 활요합니다.
+    #       문제는 티베로가 이 구문을 지원하지 않습니다.
     supports_deferrable_unique_constraints = True
     truncates_names = True
     supports_comments = True
