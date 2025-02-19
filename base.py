@@ -76,7 +76,7 @@ from .features import DatabaseFeatures  # noqa
 from .introspection import DatabaseIntrospection  # noqa
 from .operations import DatabaseOperations  # noqa
 from .schema import DatabaseSchemaEditor  # noqa
-from .utils import encode_connection_string  # noqa
+from .utils import odbc_connection_string_from_settings  # noqa
 from .validation import DatabaseValidation  # noqa
 
 @contextmanager
@@ -321,29 +321,9 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     @async_unsafe
     def get_new_connection(self, conn_params):
+        connstr = odbc_connection_string_from_settings(conn_params)
+
         options = conn_params.get('OPTIONS', {})
-        cstr_parts = {
-            'DRIVER': options.get('driver', None),
-            'DSN': options.get('dsn', None),
-            
-            'Server': conn_params.get('HOST', None),
-            'Database': conn_params.get('NAME', None),
-            'Port': conn_params.get('PORT', None),
-
-            'User': conn_params.get('USER', None),
-            'Password': conn_params.get('PASSWORD', None),
-        }
-        # 값이 None인 항목을 딕셔너리에서 제거 (불필요한 연결 문자열 요소 제거)
-        cstr_parts = { k: v for k, v in cstr_parts.items() if v is not None }
-
-        connstr = encode_connection_string(cstr_parts)
-
-        # extra_params are glued on the end of the string without encoding,
-        # so it's up to the settings writer to make sure they're appropriate -
-        # use encode_connection_string if constructing from external input.
-        if options.get('extra_params', None):
-            connstr += ';' + options['extra_params']
-
         timeout = options.get('connection_timeout', 0)
         retries = options.get('connection_retries', 5)
         backoff_time = options.get('connection_retry_backoff_time', 5)
