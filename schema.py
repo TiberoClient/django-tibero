@@ -2,12 +2,13 @@ import copy
 import datetime
 import re
 
-from django.db import DatabaseError
+from django.db import Error
 from django.db.backends.base.schema import (
     BaseDatabaseSchemaEditor,
     _related_non_m2m_objects,
 )
-from django.utils.duration import duration_iso_string
+
+from .utils import timedelta_to_tibero_interval_string
 
 
 class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
@@ -30,7 +31,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         if isinstance(value, (datetime.date, datetime.time, datetime.datetime)):
             return "'%s'" % value
         elif isinstance(value, datetime.timedelta):
-            return "'%s'" % duration_iso_string(value)
+            return "'%s'" % timedelta_to_tibero_interval_string(value)
         elif isinstance(value, str):
             return "'%s'" % value.replace("'", "''")
         elif isinstance(value, (bytes, bytearray, memoryview)):
@@ -39,6 +40,10 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             return "1" if value else "0"
         else:
             return str(value)
+
+    def add_field(self, model, field):
+        super().add_field(model, field)
+        self._add_sequence_to_deferred_sql_list_if_autofield(model, field)
 
     def remove_field(self, model, field):
         # If the column is an identity column, drop the identity before
@@ -70,14 +75,15 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             }
         )
 
+    # TODO: error code를 티베로에 맞게 고치기
     def alter_field(self, model, old_field, new_field, strict=False):
         try:
             super().alter_field(model, old_field, new_field, strict)
-        except DatabaseError as e:
+        except Error as e:
             description = str(e)
             # If we're changing type to an unsupported type we need a
             # SQLite-ish workaround
-            if "ORA-22858" in description or "ORA-22859" in description:
+            if "-7237" in description or "ORA-22859" in description:
                 self._alter_field_type_workaround(model, old_field, new_field)
             # If an identity column is changing to a non-numeric type, drop the
             # identity first.
@@ -178,6 +184,10 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             and self._is_identity_column(model._meta.db_table, new_field.column)
         ):
             self._drop_identity(model._meta.db_table, new_field.column)
+
+        # TODO: GENERATED [BY DEFAULT ON NULL | AS AWLAYS]가 지원되면 삭제해야하는 코드입니다.
+        self._add_sequence_to_deferred_sql_list_if_autofield(model, new_field)
+
         return super()._alter_column_type_sql(
             model, old_field, new_field, new_type, old_collation, new_collation
         )
@@ -214,26 +224,31 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT
-                    CASE WHEN identity_column = 'YES' THEN 1 ELSE 0 END
-                FROM user_tab_cols
-                WHERE table_name = %s AND
-                      column_name = %s
+                SELECT 1
+                FROM user_sequences
+                WHERE user_sequences.sequence_name LIKE '%%' || %s || '_' || %s || '_SQ'
                 """,
-                [self.normalize_name(table_name), self.normalize_name(column_name)],
+                [table_name, column_name]
             )
             row = cursor.fetchone()
             return row[0] if row else False
 
     def _drop_identity(self, table_name, column_name):
-        self.execute(
-            "ALTER TABLE %(table)s MODIFY %(column)s DROP IDENTITY"
-            % {
-                "table": self.quote_name(table_name),
-                "column": self.quote_name(column_name),
-            }
-        )
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT sequence_name
+                FROM user_sequences 
+                WHERE sequence_name LIKE '%%' || %s || '_' || %s || '_SQ'
+                """,
+                [table_name.upper(), column_name.upper()]
+            )
+            sequence_name = cursor.fetchone()[0]
 
+            cursor.execute("DROP SEQUENCE %s" % sequence_name)
+
+    # TODO: default_collation은 tibero6와 7에 없는 column입니다. 아래 메서드가 무엇을 위한 것인지 파악하고
+    #       수정하기
     def _get_default_collation(self, table_name):
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -248,3 +263,17 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         if collation is None and old_collation is not None:
             collation = self._get_default_collation(table_name)
         return super()._collate_sql(collation, old_collation, table_name)
+
+    # TODO: GENERATED [BY DEFAULT ON NULL | AS ALWAYS]가 지원되는 티베로 버전만 사용할 경우
+    #       삭제해야하는 코드입니다.
+    def _add_sequence_to_deferred_sql_list_if_autofield(self, model, new_field):
+        if new_field.get_internal_type() in (
+                "AutoField",
+                "BigAutoField",
+                "SmallAutoField",
+        ):
+            autoinc_sql = self.connection.ops.autoinc_sql(
+                model._meta.db_table, new_field.column
+            )
+            if autoinc_sql:
+                self.deferred_sql.extend(autoinc_sql)

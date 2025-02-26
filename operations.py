@@ -10,12 +10,10 @@ from django.db.models import AutoField, Exists, ExpressionWrapper, Lookup
 from django.db.models.expressions import RawSQL
 from django.db.models.sql.where import WhereNode
 from django.utils import timezone
-from django.utils.encoding import force_bytes
 from django.utils.functional import cached_property
 from django.utils.regex_helper import _lazy_re_compile
 
 from .base import Database
-from .utils import BulkInsertMapper
 
 
 class DatabaseOperations(BaseDatabaseOperations):
@@ -36,29 +34,43 @@ class DatabaseOperations(BaseDatabaseOperations):
     set_operators = {**BaseDatabaseOperations.set_operators, "difference": "MINUS"}
 
     # TODO: colorize this SQL code with style.SQL_KEYWORD(), etc.
-    _sequence_reset_sql = """
-DECLARE
-    table_value integer;
-    seq_value integer;
-    seq_name user_tab_identity_cols.sequence_name%%TYPE;
-BEGIN
-    BEGIN
-        SELECT sequence_name INTO seq_name FROM user_tab_identity_cols
-        WHERE  table_name = '%(table_name)s' AND
-               column_name = '%(column_name)s';
-        EXCEPTION WHEN NO_DATA_FOUND THEN
-            seq_name := '%(no_autofield_sequence_name)s';
-    END;
+#     _sequence_reset_sql = """
+# DECLARE
+#     table_value integer;
+#     seq_value integer;
+#     seq_name user_tab_identity_cols.sequence_name%%TYPE;
+# BEGIN
+#     BEGIN
+#         SELECT sequence_name INTO seq_name FROM user_tab_identity_cols
+#         WHERE  table_name = '%(table_name)s' AND
+#                column_name = '%(column_name)s';
+#         EXCEPTION WHEN NO_DATA_FOUND THEN
+#             seq_name := '%(no_autofield_sequence_name)s';
+#     END;
+#
+#     SELECT NVL(MAX(%(column)s), 0) INTO table_value FROM %(table)s;
+#     SELECT NVL(last_number - cache_size, 0) INTO seq_value FROM user_sequences
+#            WHERE sequence_name = seq_name;
+#     WHILE table_value > seq_value LOOP
+#         EXECUTE IMMEDIATE 'SELECT "'||seq_name||'".nextval%(suffix)s'
+#         INTO seq_value;
+#     END LOOP;
+# END;
+# """
 
-    SELECT NVL(MAX(%(column)s), 0) INTO table_value FROM %(table)s;
-    SELECT NVL(last_number - cache_size, 0) INTO seq_value FROM user_sequences
-           WHERE sequence_name = seq_name;
-    WHILE table_value > seq_value LOOP
-        EXECUTE IMMEDIATE 'SELECT "'||seq_name||'".nextval%(suffix)s'
-        INTO seq_value;
-    END LOOP;
-END;
-"""
+    _sequence_reset_sql = """
+    DECLARE
+        table_value integer;
+        seq_value integer;
+    BEGIN
+        SELECT NVL(MAX(%(column)s), 0) INTO table_value FROM %(table)s;
+        SELECT NVL(last_number - cache_size, 0) INTO seq_value FROM user_sequences
+               WHERE sequence_name = '%(sequence)s';
+        WHILE table_value > seq_value LOOP
+            SELECT "%(sequence)s".nextval INTO seq_value FROM dual;
+        END LOOP;
+    END;
+    """
 
     # Oracle doesn't support string without precision; use the max string size.
     cast_char_field_without_max_length = "NVARCHAR2(2000)"
@@ -218,7 +230,25 @@ END;
         internal_type = expression.output_field.get_internal_type()
         # if internal_type in ["JSONField", "TextField"]:
         #     converters.append(self.convert_textfield_value)
-        if internal_type == "BooleanField":
+        if internal_type == "SmallIntegerField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "IntegerField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "BigIntegerField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "PositiveBigIntegerField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "PositiveSmallIntegerField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "PositiveIntegerField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "SmallAutoField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "AutoField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "BigAutoField":
+            converters.append(self.convert_integerfield_value)
+        elif internal_type == "BooleanField":
             converters.append(self.convert_booleanfield_value)
         elif internal_type == "DateTimeField":
             if settings.USE_TZ:
@@ -239,6 +269,12 @@ END;
                 else self.convert_empty_string
             )
         return converters
+
+    def convert_integerfield_value(self, value, expression, connection):
+        if value is not None:
+            return int(value)
+        else:
+            return value
 
     def convert_booleanfield_value(self, value, expression, connection):
         if value in (0, 1):
@@ -485,48 +521,88 @@ END;
     def sequence_reset_by_name_sql(self, style, sequences):
         sql = []
         for sequence_info in sequences:
-            no_autofield_sequence_name = self._get_no_autofield_sequence_name(
-                sequence_info["table"]
-            )
-            table = self.quote_name(sequence_info["table"])
-            column = self.quote_name(sequence_info["column"] or "id")
+            sequence_name = self._get_sequence_name(sequence_info["table"], sequence_info["column"] or "id")
+            table_name = self.quote_name(sequence_info["table"])
+            column_name = self.quote_name(sequence_info["column"] or 'id')
             query = self._sequence_reset_sql % {
-                "no_autofield_sequence_name": no_autofield_sequence_name,
-                "table": table,
-                "column": column,
-                "table_name": strip_quotes(table),
-                "column_name": strip_quotes(column),
-                "suffix": self.connection.features.bare_select_suffix,
+                'sequence': sequence_name,
+                'table': table_name,
+                'column': column_name,
             }
             sql.append(query)
         return sql
 
     def sequence_reset_sql(self, style, model_list):
+        from django.db import models
         output = []
         query = self._sequence_reset_sql
         for model in model_list:
             for f in model._meta.local_fields:
-                if isinstance(f, AutoField):
-                    no_autofield_sequence_name = self._get_no_autofield_sequence_name(
-                        model._meta.db_table
-                    )
-                    table = self.quote_name(model._meta.db_table)
-                    column = self.quote_name(f.column)
-                    output.append(
-                        query
-                        % {
-                            "no_autofield_sequence_name": no_autofield_sequence_name,
-                            "table": table,
-                            "column": column,
-                            "table_name": strip_quotes(table),
-                            "column_name": strip_quotes(column),
-                            "suffix": self.connection.features.bare_select_suffix,
-                        }
-                    )
+                if isinstance(f, models.AutoField):
+                    table_name = self.quote_name(model._meta.db_table)
+                    sequence_name = self._get_sequence_name(model._meta.db_table, f.column)
+                    column_name = self.quote_name(f.column)
+                    output.append(query % {'sequence': sequence_name,
+                                           'table': table_name,
+                                           'column': column_name})
                     # Only one AutoField is allowed per model, so don't
                     # continue to loop
                     break
+            for f in model._meta.many_to_many:
+                if not f.remote_field.through:
+                    table_name = self.quote_name(f.m2m_db_table())
+                    sequence_name = self._get_sequence_name(f.m2m_db_table(), "id")
+                    column_name = self.quote_name('id')
+                    output.append(query % {'sequence': sequence_name,
+                                           'table': table_name,
+                                           'column': column_name})
         return output
+
+    # def sequence_reset_by_name_sql(self, style, sequences):
+    #     sql = []
+    #     for sequence_info in sequences:
+    #         no_autofield_sequence_name = self._get_no_autofield_sequence_name(
+    #             sequence_info["table"]
+    #         )
+    #         table = self.quote_name(sequence_info["table"])
+    #         column = self.quote_name(sequence_info["column"] or "id")
+    #         query = self._sequence_reset_sql % {
+    #             "no_autofield_sequence_name": no_autofield_sequence_name,
+    #             "table": table,
+    #             "column": column,
+    #             "table_name": strip_quotes(table),
+    #             "column_name": strip_quotes(column),
+    #             "suffix": self.connection.features.bare_select_suffix,
+    #         }
+    #         sql.append(query)
+    #     return sql
+    #
+    # def sequence_reset_sql(self, style, model_list):
+    #     output = []
+    #     query = self._sequence_reset_sql
+    #     for model in model_list:
+    #         for f in model._meta.local_fields:
+    #             if isinstance(f, AutoField):
+    #                 no_autofield_sequence_name = self._get_no_autofield_sequence_name(
+    #                     model._meta.db_table
+    #                 )
+    #                 table = self.quote_name(model._meta.db_table)
+    #                 column = self.quote_name(f.column)
+    #                 output.append(
+    #                     query
+    #                     % {
+    #                         "no_autofield_sequence_name": no_autofield_sequence_name,
+    #                         "table": table,
+    #                         "column": column,
+    #                         "table_name": strip_quotes(table),
+    #                         "column_name": strip_quotes(column),
+    #                         "suffix": self.connection.features.bare_select_suffix,
+    #                     }
+    #                 )
+    #                 # Only one AutoField is allowed per model, so don't
+    #                 # continue to loop
+    #                 break
+    #     return output
 
     def start_transaction_sql(self):
         return ""
@@ -660,17 +736,51 @@ END;
             )
         return super().subtract_temporals(internal_type, lhs, rhs)
 
-    # TODO: Tibero 6에는 "GENERATED BY DEFAULT"가 지원이 되지 않습니다.
-    #       따라서 Tibero 6를 이용할 경우 이 함수를 구현해야 합니다.
-    #       Django 1.10.29 버전의 oracle 코드를 참고하기
     def autoinc_sql(self, table, column):
-        """
-        Return any SQL needed to support auto-incrementing primary keys, or
-        None if no SQL is necessary.
+        # To simulate auto-incrementing primary keys in Oracle, we have to
+        # create a sequence and a trigger.
+        args = {
+            'sq_name': self._get_sequence_name(table, column),
+            'tr_name': self._get_trigger_name(table, column),
+            'tbl_name': self.quote_name(table),
+            'col_name': self.quote_name(column),
+        }
+        sequence_sql = """
+        DECLARE
+            i INTEGER;
+        BEGIN
+            SELECT COUNT(1) INTO i FROM USER_SEQUENCES
+                WHERE SEQUENCE_NAME = '%(sq_name)s';
+            IF i = 0 THEN
+                EXECUTE IMMEDIATE 'CREATE SEQUENCE "%(sq_name)s"';
+            END IF;
+        END;
+        """ % args
+        trigger_sql = """
+        CREATE OR REPLACE TRIGGER "%(tr_name)s"
+        BEFORE INSERT ON %(tbl_name)s
+        FOR EACH ROW
+        WHEN (new.%(col_name)s IS NULL)
+            BEGIN
+                SELECT "%(sq_name)s".nextval
+                INTO :new.%(col_name)s FROM dual;
+            END;
+        """ % args
+        return sequence_sql, trigger_sql
 
-        This SQL is executed when a table is created.
-        """
-        return None
+    def _get_sequence_name(self, table, column):
+        name_length = self.max_name_length() - 3
+
+        name = strip_quotes(table) + '_' + strip_quotes(column)
+        name = truncate_name(name, name_length).upper()
+        return '%s_SQ' % name
+
+    def _get_trigger_name(self, table, column):
+        name_length = self.max_name_length() - 3
+
+        name = strip_quotes(table) + '_' + strip_quotes(column)
+        name = truncate_name(name, name_length).upper()
+        return '%s_TR' % name
 
     def bulk_batch_size(self, fields, objs):
         """Oracle restricts the number of parameters in a query."""

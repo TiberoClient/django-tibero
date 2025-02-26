@@ -1,7 +1,4 @@
-import datetime
-import decimal
-
-from .base import Database
+import re
 
 
 class BulkInsertMapper:
@@ -112,3 +109,41 @@ def dsn(conn_params):
         return dsn_alias
     else:
         raise ValueError("'HOST', 'PORT', 'DATABASE' are required or 'dsn' is required")
+
+
+def timedelta_to_tibero_interval_string(timedelta):
+    # timedelta에서 days, seconds, microseconds 추출
+    days = timedelta.days
+    seconds = timedelta.seconds
+
+    # 시, 분, 초로 변환
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    ms = timedelta.microseconds
+
+    # 마이크로초를 소수점 이하 6자리로 변환
+    return f"{days} {h}:{m}:{s}.{ms:06}"
+
+
+paren_number_pattern = re.compile(r'\(\d+\)')
+
+
+def remove_parentheses_numbers(data_type):
+    """
+    SQL 타입명에서 (n)같이 parenthesis와 그 안의 숫자를 제거합니다.
+    예를 들어, 다음과 같은 문자열이 아래와 같이 변환됩니다.
+
+    변환 전:
+    "TIMESTAMP(1)",
+    "TIMESTAMP(2)",
+    "INTERVAL DAYS(3) SECONDS(4)",
+    "INTERVAL DAYS(9) SECONDS(10)"
+
+    변환 후:
+    "TIMESTAMP",
+    "TIMESTAMP",
+    "INTERVAL DAYS SECONDS",
+    "INTERVAL DAYS SECONDS"
+    """
+    return paren_number_pattern.sub('', data_type)

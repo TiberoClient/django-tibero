@@ -26,7 +26,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_transactions = True
     supports_timezones = False
     has_native_duration_field = True
-    can_defer_constraint_checks = True
+    # TODO: foreign key에서 deferrable이 지원되면 그 때 True로 바꾸기
+    can_defer_constraint_checks = False
     supports_partially_nullable_unique_constraints = False
     # TODO: Tibero에서는 지원하는데 이 기능을 테스트하는 django 코드에서 SET CONSTRAINT ... IMMEDIATE 구문을 활요합니다.
     #       문제는 티베로가 이 구문을 지원하지 않습니다.
@@ -78,7 +79,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     max_query_params = 2**16 - 1
     supports_partial_indexes = False
     supports_stored_generated_columns = False
-    supports_virtual_generated_columns = True
+    # TODO: Tibero에서 virtual column을 지원하면 그 때 다시 보기
+    supports_virtual_generated_columns = False
     can_rename_index = True
     supports_slicing_ordering_in_compound = True
     requires_compound_order_by_subquery = True
@@ -135,6 +137,9 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "Oracle doesn't support casting filters to NUMBER.": {
                 "lookup.tests.LookupQueryingTests.test_aggregate_combined_lookup",
             },
+            "Tibero doesn't support JSON type": {
+                "schema.tests.SchemaTests.test_db_default_output_field_resolving"
+            }
         }
 
         # TODO: 티베로에서는 스킵할 필요가 없을 수도 있으니 일단 테스트를 포함하게 했습니다.
@@ -187,6 +192,12 @@ class DatabaseFeatures(BaseDatabaseFeatures):
 
     # Tibero 6/7 sql reference을 참고하면 collation keyword 자체가 없습니다.
     supports_collation_on_charfield = False
+
+    # TODO: Tibero 7에서도 Django의 요구사항에 맞게 json을 지원할 수 있는 방법이 아직 없습니다.
+    #       나중에 json 관련 뷰가 생성되면 json 지원이 될 수 있는지 확인바랍니다.
+    @cached_property
+    def supports_json_field(self):
+        return self.connection.oracle_version >= (100,)
 
     # TODO: 일단은 무조건 지원하게 했습니다.
     #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기

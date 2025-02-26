@@ -1,65 +1,37 @@
 from collections import namedtuple
 
-from django.db import models
+from django.db import models, ProgrammingError
 from django.db.backends.base.introspection import BaseDatabaseIntrospection
 from django.db.backends.base.introspection import FieldInfo as BaseFieldInfo
 from django.db.backends.base.introspection import TableInfo as BaseTableInfo
 
-from .base import Database
+from .utils import remove_parentheses_numbers
 
 FieldInfo = namedtuple(
     "FieldInfo", BaseFieldInfo._fields + ("is_autofield", "is_json", "comment")
 )
 TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
 
-# TODO: 아래 상수들은 pyodbc에서 제공안하는 상수들입니다. 추측으로는 mssql odbc에서 제공하는 커스텀
-#       타입인 것으로 추측됩니다. 티베로에 맞게 코드를 고치기
-SQL_AUTOFIELD = -777555
-SQL_BIGAUTOFIELD = -777444
-SQL_SMALLAUTOFIELD = -777333
-SQL_TIMESTAMP_WITH_TIMEZONE = -155
-
 class DatabaseIntrospection(BaseDatabaseIntrospection):
-    cache_bust_counter = 1
-
-    # TODO: data_types_reverse의 값들은 mssql-django에서 그대로 가져왔습니다.
-    #       Tibero에 맞게 수정할 때 base.py의 DatabaseWrapper.data_type에 있는 타입과
-    #       일대일 매칭이 되도록 하기
     # Maps type objects to Django Field types.
     data_types_reverse = {
-        SQL_AUTOFIELD: 'AutoField',
-        SQL_BIGAUTOFIELD: 'BigAutoField',
-        SQL_SMALLAUTOFIELD: 'SmallAutoField',
-        Database.SQL_BIGINT: 'BigIntegerField',
-        # Database.SQL_BINARY:            ,
-        Database.SQL_BIT: 'BooleanField',
-        Database.SQL_CHAR: 'CharField',
-        Database.SQL_DECIMAL: 'DecimalField',
-        Database.SQL_DOUBLE: 'FloatField',
-        Database.SQL_FLOAT: 'FloatField',
-        Database.SQL_GUID: 'TextField',
-        Database.SQL_INTEGER: 'IntegerField',
-        Database.SQL_LONGVARBINARY: 'BinaryField',
-        # Database.SQL_LONGVARCHAR:       ,
-        Database.SQL_NUMERIC: 'DecimalField',
-        Database.SQL_REAL: 'FloatField',
-        Database.SQL_SMALLINT: 'SmallIntegerField',
-        Database.SQL_SS_TIME2: 'TimeField',
-        Database.SQL_TINYINT: 'SmallIntegerField',
-        Database.SQL_TYPE_DATE: 'DateField',
-        Database.SQL_TYPE_TIME: 'TimeField',
-        Database.SQL_TYPE_TIMESTAMP: 'DateTimeField',
-        SQL_TIMESTAMP_WITH_TIMEZONE: 'DateTimeField',
-        Database.SQL_VARBINARY: 'BinaryField',
-        Database.SQL_VARCHAR: 'TextField',
-        Database.SQL_WCHAR: 'CharField',
-        Database.SQL_WLONGVARCHAR: 'TextField',
-        Database.SQL_WVARCHAR: 'TextField',
+        "DATE": "DateField",
+        "DOUBLE PRECISION": "FloatField",
+        "BLOB": "BinaryField",
+        "CHAR": "CharField",
+        "CLOB": "TextField",
+        "INTERVAL DAY TO SECOND": "DurationField",
+        "NCHAR": "CharField",
+        "NCLOB": "TextField",
+        "NVARCHAR": "CharField",
+        "DECIMAL": "DecimalField",
+        "TIMESTAMP": "DateTimeField",
+        "VARCHAR": "CharField",
     }
 
     def get_field_type(self, data_type, description):
         # TODO: Tibero7에 맞게 수정하기
-        if data_type == Database.NUMBER:
+        if data_type == "DECIMAL":
             precision, scale = description[4:6]
             if scale == 0:
                 if precision > 11:
@@ -76,11 +48,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                     return "AutoField"
                 else:
                     return "IntegerField"
-            elif scale == -127:
-                return "FloatField"
-        # TODO: Tibero7에 맞게 수정하기
-        elif data_type == Database.NCLOB and description.is_json:
-            return "JSONField"
+        # TODO: 나중에 user_json_columns view가 Tibero에서 지원되면 json기능 추가하기
+        #       그 전까지는 django에서 json이 올바르게 작동하는 방법을 차지 못했습니다.
 
         return super().get_field_type(data_type, description)
 
@@ -119,30 +88,12 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         interface.
         """
         # A default collation for the given table/view/materialized view.
-        cursor.execute(
-            """
-            SELECT user_tables.default_collation
-            FROM user_tables
-            WHERE
-                user_tables.table_name = UPPER(%s) AND
-                NOT EXISTS (
-                    SELECT 1
-                    FROM user_mviews
-                    WHERE user_mviews.mview_name = user_tables.table_name
-                )
-            UNION ALL
-            SELECT user_views.default_collation
-            FROM user_views
-            WHERE user_views.view_name = UPPER(%s)
-            UNION ALL
-            SELECT user_mviews.default_collation
-            FROM user_mviews
-            WHERE user_mviews.mview_name = UPPER(%s)
-            """,
-            [table_name, table_name, table_name],
-        )
-        row = cursor.fetchone()
-        default_table_collation = row[0] if row else ""
+
+        # Tibero는 oracle과 다르게 default_collation column을 지원하지 않습니다. 대신 nls_session_parameters에서
+        # 필요한 collation 정보를 가져옵니다.
+        cursor.execute("SELECT VALUE FROM nls_session_parameters WHERE parameter = 'NLS_COMP'")
+        default_table_collation = cursor.fetchone()[0]
+
         # user_tab_columns gives data default for columns
         cursor.execute(
             """
@@ -150,30 +101,20 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 user_tab_cols.column_name,
                 user_tab_cols.data_default,
                 CASE
-                    WHEN user_tab_cols.collation = %s
-                    THEN NULL
-                    ELSE user_tab_cols.collation
-                END collation,
-                CASE
                     WHEN user_tab_cols.char_used IS NULL
                     THEN user_tab_cols.data_length
                     ELSE user_tab_cols.char_length
                 END as display_size,
-                CASE
-                    WHEN user_tab_cols.identity_column = 'YES' THEN 1
-                    ELSE 0
-                END as is_autofield,
-                CASE
+                CASE 
                     WHEN EXISTS (
-                        SELECT  1
-                        FROM user_json_columns
-                        WHERE
-                            user_json_columns.table_name = user_tab_cols.table_name AND
-                            user_json_columns.column_name = user_tab_cols.column_name
+                        SELECT 1
+                        FROM user_sequences 
+                        WHERE user_sequences.sequence_name LIKE '%%' || user_tab_cols.table_name || '_' || user_tab_cols.column_name || '_SQ'
                     )
                     THEN 1
                     ELSE 0
-                END as is_json,
+                END AS is_autofield,
+                0 as is_json,
                 user_col_comments.comments as col_comment
             FROM user_tab_cols
             LEFT OUTER JOIN
@@ -182,13 +123,13 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 user_col_comments.table_name = user_tab_cols.table_name
             WHERE user_tab_cols.table_name = UPPER(%s)
             """,
-            [default_table_collation, table_name],
+            [table_name],
         )
         field_map = {
             column: (
                 display_size,
                 default.rstrip() if default and default != "NULL" else None,
-                collation,
+                default_table_collation,
                 is_autofield,
                 is_json,
                 comment,
@@ -196,22 +137,48 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             for (
                 column,
                 default,
-                collation,
                 display_size,
                 is_autofield,
                 is_json,
                 comment,
             ) in cursor.fetchall()
         }
-        self.cache_bust_counter += 1
-        cursor.execute(
-            "SELECT * FROM {} WHERE ROWNUM < 2 AND {} > 0".format(
-                self.connection.ops.quote_name(table_name), self.cache_bust_counter
-            )
-        )
+
+
+        # Each row has the following columns:
+        #     table_cat
+        #     table_schem
+        #     table_name
+        #     column_name       3
+        #     data_type         4
+        #     type_name         5
+        #     column_size       6
+        #     buffer_length
+        #     decimal_digits    7
+        #     num_prec_radix
+        #     nullable          8
+        #     remarks
+        #     column_def        10
+        #     sql_data_type
+        #     sql_datetime_sub
+        #     char_octet_length
+        #     ordinal_position
+        #     is_nullable: One of SQL_NULLABLE, SQL_NO_NULLS, SQL_NULLABLE_UNKNOWN.
+        cursor.columns(table=table_name.upper())
+        column_metadata = list(cursor)
+
+        # 유저가 존재하지 않는 테이블 이름을 이 메서드에 전달할 수도 있기 때문에 존재하지 않으면 일부러
+        # 에러를 발생시킨다.
+        if len(column_metadata) == 0:
+            raise ProgrammingError("42S02", f"Specified schema object was not found: {table_name}")
+
         description = []
-        for desc in cursor.description:
-            name = desc[0]
+        for desc in column_metadata:
+            name = desc[3]
+            type_name = desc[5]
+            if "INTERVAL" in type_name or "TIMESTAMP" in type_name:
+                type_name = remove_parentheses_numbers(type_name)
+
             (
                 display_size,
                 default,
@@ -220,16 +187,15 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 is_json,
                 comment,
             ) = field_map[name]
-            name %= {}  # oracledb, for some reason, doubles percent signs.
             description.append(
                 FieldInfo(
-                    self.identifier_converter(name),
-                    desc[1],
-                    display_size,
-                    desc[3],
-                    desc[4] or 0,
-                    desc[5] or 0,
-                    *desc[6:],
+                    self.identifier_converter(name), # name
+                    type_name,                       # type_name
+                    display_size,                    # display_size
+                    desc[6],                         # internal_size
+                    desc[6] or 0,                    # precision
+                    desc[8] or 0,                    # scale
+                    desc[10],                         # null_ok
                     default,
                     collation,
                     is_autofield,
@@ -243,6 +209,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         """Identifier comparison is case insensitive under Oracle."""
         return name.lower()
 
+    # TODO: Tibero6_FS06_CS2005에서 지원안하는 user_tab_identity_cols를 이용하는 sql을 변경해야 합니다.
     def get_sequences(self, cursor, table_name, table_fields=()):
         cursor.execute(
             """
@@ -370,6 +337,9 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 "check": check,
                 "index": unique,  # All uniques come with an index
             }
+
+        # Oracle의 경우 user_col_columns의 position의 start number는 1이지만 Tibero의
+        # start number는 0입니다.
         # Foreign key constraints
         cursor.execute(
             """
@@ -383,7 +353,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 user_constraints cons
             INNER JOIN
                 user_cons_columns rcols
-                ON rcols.constraint_name = cons.r_constraint_name AND rcols.position = 1
+                ON rcols.constraint_name = cons.r_constraint_name AND rcols.position = 0
             LEFT OUTER JOIN
                 user_cons_columns cols
                 ON cons.constraint_name = cols.constraint_name
