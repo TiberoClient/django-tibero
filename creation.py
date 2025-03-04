@@ -444,10 +444,10 @@ class DatabaseCreation(BaseDatabaseCreation):
     def _test_database_tblspace_maxsize(self):
         # TODO: 테스트 도중 DATAFILE이 가득 차서 예외가 발생했습니다.
         #       일관성을 위해 DATAFILE_TMP_MAXSIZE 또한 크기를 조정하는 것을 생각하십시오.
-        return self._test_settings_get("DATAFILE_MAXSIZE", default="2000M")
+        return self._test_settings_get("DATAFILE_MAXSIZE", default="6000M")
 
     def _test_database_tblspace_tmp_maxsize(self):
-        return self._test_settings_get("DATAFILE_TMP_MAXSIZE", default="500M")
+        return self._test_settings_get("DATAFILE_TMP_MAXSIZE", default="200M")
 
     def _test_database_tblspace_size(self):
         return self._test_settings_get("DATAFILE_SIZE", default="50M")

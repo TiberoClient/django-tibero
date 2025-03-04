@@ -510,7 +510,7 @@ class CursorWrapper:
 
     def _format_sql(self, sql, params):
         # pyodbc uses '?' instead of '%s' as parameter placeholder.
-        if params is not () and params != []:
+        if params != () and params != []:
             sql = sql % tuple('?' * len(params))
         return sql
 

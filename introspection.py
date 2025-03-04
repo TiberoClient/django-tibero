@@ -374,6 +374,39 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 "index": False,
                 "columns": columns.split(","),
             }
+
+        # index에 대한 정보를 얻기위한 오라클 쿼리는 아래와 같습니다. 그런데 WHERE 조건 아래 NOT EXISTS (...) 의 결과가
+        # 티베로랑 다르게 반환됩니다. 오라클의 경우 foreign key constraint에 unique constraint가 있어도 index_name이
+        # null값이지만 티베로는 index_name이 비어있지 않습니다. 이로 인해 서로 다른 결과를 반환합니다.
+        # 이는 schema.tests.SchemaTests.test_alter_field_o2o_to_fk 테스트에서 확인 가능합니다.
+        #
+        # cursor.execute(
+        #     """
+        #     SELECT
+        #         ind.index_name,
+        #         LOWER(ind.index_type),
+        #         LOWER(ind.uniqueness),
+        #         LISTAGG(LOWER(cols.column_name), ',')
+        #             WITHIN GROUP (ORDER BY cols.column_position),
+        #         LISTAGG(cols.descend, ',') WITHIN GROUP (ORDER BY cols.column_position)
+        #     FROM
+        #         user_ind_columns cols, user_indexes ind
+        #     WHERE
+        #         cols.table_name = UPPER(%s) AND
+        #         NOT EXISTS (
+        #             SELECT 1
+        #             FROM user_constraints cons
+        #             WHERE ind.index_name = cons.index_name
+        #         ) AND cols.index_name = ind.index_name
+        #     GROUP BY ind.index_name, ind.index_type, ind.uniqueness
+        #     """,
+        #     [table_name],
+        # )
+
+        # django app에서 만든 index는 DB가 만드는 임의의 index name이 아니라 명시적인 이름을 가지고 있습니다.
+        # 그리고 쿼리를 보면 django app이 명시적으로 만든 index를 찾는 것으로 추정하고 있습니다. 그래서 쿼리를
+        # 아래와 같이 고쳤습니다.
+        #
         # Now get indexes
         cursor.execute(
             """
@@ -388,11 +421,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 user_ind_columns cols, user_indexes ind
             WHERE
                 cols.table_name = UPPER(%s) AND
-                NOT EXISTS (
-                    SELECT 1
-                    FROM user_constraints cons
-                    WHERE ind.index_name = cons.index_name
-                ) AND cols.index_name = ind.index_name
+                NOT REGEXP_LIKE(ind.index_name, '^_.+CON[0-9]+$')
+                AND cols.index_name = ind.index_name
             GROUP BY ind.index_name, ind.index_type, ind.uniqueness
             """,
             [table_name],

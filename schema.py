@@ -226,7 +226,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
                 """
                 SELECT 1
                 FROM user_sequences
-                WHERE user_sequences.sequence_name LIKE '%%' || %s || '_' || %s || '_SQ'
+                WHERE user_sequences.sequence_name LIKE '%%' || UPPER(%s) || '_' || UPPER(%s) || '_SQ'
                 """,
                 [table_name, column_name]
             )

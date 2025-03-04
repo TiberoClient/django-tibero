@@ -68,13 +68,13 @@ def odbc_connection_string_from_settings(conn_params):
 
         'Server': conn_params.get('HOST', None),
         'Database': conn_params.get('NAME', None),
-        'Port': conn_params.get('PORT', None),
+        'Port': str(conn_params.get('PORT', None)),
 
         'User': conn_params.get('USER', None),
         'Password': conn_params.get('PASSWORD', None),
     }
     # 값이 None인 항목을 딕셔너리에서 제거 (불필요한 연결 문자열 요소 제거)
-    cstr_parts = {k: v for k, v in cstr_parts.items() if v is not None}
+    cstr_parts = {k: v for k, v in cstr_parts.items() if v is not None or v == ""}
 
     connstr = encode_connection_string(cstr_parts)
 
@@ -97,7 +97,7 @@ def dsn(conn_params):
         ValueError: If required parameters are missing.
     """
     host = conn_params.get('HOST', None)
-    port = conn_params.get('PORT', None)
+    port = str(conn_params.get('PORT', None))
     database = conn_params.get('NAME', None)
 
     options = conn_params.get('OPTIONS', {})

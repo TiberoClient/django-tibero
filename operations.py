@@ -5,6 +5,7 @@ from functools import lru_cache
 from django.conf import settings
 from django.db import NotSupportedError
 from django.db.backends.base.operations import BaseDatabaseOperations
+from django.db.backends.ddl_references import Statement, Table
 from django.db.backends.utils import split_tzname_delta, strip_quotes, truncate_name
 from django.db.models import AutoField, Exists, ExpressionWrapper, Lookup
 from django.db.models.expressions import RawSQL
@@ -353,7 +354,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         return 1000
 
     def max_name_length(self):
-        return 30
+        return 128
 
     def pk_default_value(self):
         return "NULL"
@@ -361,10 +362,11 @@ class DatabaseOperations(BaseDatabaseOperations):
     def prep_for_iexact_query(self, x):
         return x
 
-    def process_clob(self, value):
-        if value is None:
-            return ""
-        return value.read()
+    # pyodbc에서는 clob을 처리하는 별도의 로직을 제공하지 않습니다.
+    # def process_clob(self, value):
+    #     if value is None:
+    #         return ""
+    #     return value
 
     def quote_name(self, name):
         # SQL92 requires delimited (quoted) names to be case-sensitive.  When
@@ -766,7 +768,8 @@ class DatabaseOperations(BaseDatabaseOperations):
                 INTO :new.%(col_name)s FROM dual;
             END;
         """ % args
-        return sequence_sql, trigger_sql
+        return (Statement(template="%(sql)s", sql=sequence_sql, references_table=Table(table, self.quote_name)),
+                Statement(template="%(sql)s", sql=trigger_sql, references_table=Table(table, self.quote_name)))
 
     def _get_sequence_name(self, table, column):
         name_length = self.max_name_length() - 3
