@@ -100,45 +100,34 @@ class DatabaseFeatures(BaseDatabaseFeatures):
                 "db_functions.text.test_sha224.SHA224Tests.test_basic",
                 "db_functions.text.test_sha224.SHA224Tests.test_transform",
             },
-            "Tibero doesn't correctly calculate ISO 8601 week numbering before "
-            "1583 (the Gregorian calendar was introduced in 1582).": {
-                "db_functions.datetime.test_extract_trunc.DateFunctionTests."
-                "test_trunc_week_before_1000",
-                "db_functions.datetime.test_extract_trunc."
-                "DateFunctionWithTimeZoneTests.test_trunc_week_before_1000",
+            "Tibero doesn't correctly calculate ISO 8601 week numbering before 1583 (the Gregorian calendar was introduced in 1582).": {
+                "db_functions.datetime.test_extract_trunc.DateFunctionTests.test_trunc_week_before_1000",
+                "db_functions.datetime.test_extract_trunc.DateFunctionWithTimeZoneTests.test_trunc_week_before_1000",
             },
             "Tibero doesn't support bitwise XOR.": {
                 "expressions.tests.ExpressionOperatorTests.test_lefthand_bitwise_xor",
-                "expressions.tests.ExpressionOperatorTests."
-                "test_lefthand_bitwise_xor_null",
-                "expressions.tests.ExpressionOperatorTests."
-                "test_lefthand_bitwise_xor_right_null",
+                "expressions.tests.ExpressionOperatorTests.test_lefthand_bitwise_xor_null",
+                "expressions.tests.ExpressionOperatorTests.test_lefthand_bitwise_xor_right_null",
             },
             "Tibero requires ORDER BY in row_number, ANSI:SQL doesn't.": {
-                "expressions_window.tests.WindowFunctionTests."
-                "test_row_number_no_ordering",
+                "expressions_window.tests.WindowFunctionTests.test_row_number_no_ordering",
                 "prefetch_related.tests.PrefetchLimitTests.test_empty_order",
             },
             "Tibero doesn't support changing collations on indexed columns (#33671).": {
-                "migrations.test_operations.OperationTests."
-                "test_alter_field_pk_fk_db_collation",
+                "migrations.test_operations.OperationTests.test_alter_field_pk_fk_db_collation",
             },
             "Tibero doesn't support comparing NCLOB to NUMBER.": {
-                "generic_relations_regress.tests.GenericRelationTests."
-                "test_textlink_filter",
+                "generic_relations_regress.tests.GenericRelationTests.test_textlink_filter",
             },
             "Tibero doesn't support casting filters to NUMBER.": {
                 "lookup.tests.LookupQueryingTests.test_aggregate_combined_lookup",
             },
             "Tibero doesn't support JSON type.": {
-                "schema.tests.SchemaTests.test_db_default_output_field_resolving"
-                "model_fields.test_jsonfield.TestQuerying."
-                "test_usage_in_subquery",
+                "schema.tests.SchemaTests.test_db_default_output_field_resolving",
+                "model_fields.test_jsonfield.TestQuerying.test_usage_in_subquery",
             },
-            "pyodbc does not hide '-15104: no data found' "
-            "exceptions raised in database triggers.": {
-                "backends.oracle.tests.TransactionalTests."
-                "test_hidden_no_data_found_exception"
+            "pyodbc does not hide '-15104: no data found' exceptions raised in database triggers.": {
+                "backends.oracle.tests.TransactionalTests.test_hidden_no_data_found_exception"
             },
         }
         return skips
