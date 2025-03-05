@@ -5,14 +5,7 @@ from django.utils.functional import cached_property
 
 class DatabaseFeatures(BaseDatabaseFeatures):
     minimum_database_version = (6,)
-    # TODO: 티베로에서도 allows_group_by_lob이 안되는지 확인하기
-    # Oracle crashes with "ORA-00932: inconsistent datatypes: expected - got
-    # BLOB" when grouping by LOBs (#24096).
     allows_group_by_lob = False
-    # TODO: 티베로에서도 allows_group_by_select_index이 안되는지 확인하기
-    # Although GROUP BY select index is supported by Oracle 23c+, it requires
-    # GROUP_BY_POSITION_ENABLED to be enabled to avoid backward compatibility
-    # issues. Introspection of this settings is not straightforward.
     allows_group_by_select_index = False
     interprets_empty_strings_as_nulls = True
     has_select_for_update = True
@@ -42,11 +35,11 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     requires_literal_defaults = True
     supports_default_keyword_in_bulk_insert = False
     closed_cursor_error_class = ProgrammingError
-    # Select for update with limit can be achieved on Oracle, but not with the
+    # Select for update with limit can be achieved on Tibero, but not with the
     # current backend.
     supports_select_for_update_with_limit = False
     supports_temporal_subtraction = True
-    # Oracle doesn't ignore quoted identifiers case but the current backend
+    # Tibero doesn't ignore quoted identifiers case but the current backend
     # does by uppercasing all identifiers.
     ignores_table_name_case = True
     supports_index_on_text_field = False
@@ -90,7 +83,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     test_now_utc_template = "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'"
     # TOOD: 테스트를 하면서 티베로에서 실패하는 메서드 추가하기
     django_test_expected_failures = {
-        # A bug in Django/oracledb with respect to string handling (#23843).
+        # 5.1.5 기준으로 oracle backend가 실패하는 테스트 케이스 (#23843).
         "annotations.tests.NonAggregateAnnotationTestCase.test_custom_functions",
         "annotations.tests.NonAggregateAnnotationTestCase."
         "test_custom_functions_can_ref_other_functions",
@@ -103,66 +96,51 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     @cached_property
     def django_test_skips(self):
         skips = {
-            "Oracle doesn't support SHA224.": {
+            "Tibero doesn't support SHA224.": {
                 "db_functions.text.test_sha224.SHA224Tests.test_basic",
                 "db_functions.text.test_sha224.SHA224Tests.test_transform",
             },
-            "Oracle doesn't correctly calculate ISO 8601 week numbering before "
+            "Tibero doesn't correctly calculate ISO 8601 week numbering before "
             "1583 (the Gregorian calendar was introduced in 1582).": {
                 "db_functions.datetime.test_extract_trunc.DateFunctionTests."
                 "test_trunc_week_before_1000",
                 "db_functions.datetime.test_extract_trunc."
                 "DateFunctionWithTimeZoneTests.test_trunc_week_before_1000",
             },
-            "Oracle doesn't support bitwise XOR.": {
+            "Tibero doesn't support bitwise XOR.": {
                 "expressions.tests.ExpressionOperatorTests.test_lefthand_bitwise_xor",
                 "expressions.tests.ExpressionOperatorTests."
                 "test_lefthand_bitwise_xor_null",
                 "expressions.tests.ExpressionOperatorTests."
                 "test_lefthand_bitwise_xor_right_null",
             },
-            "Oracle requires ORDER BY in row_number, ANSI:SQL doesn't.": {
+            "Tibero requires ORDER BY in row_number, ANSI:SQL doesn't.": {
                 "expressions_window.tests.WindowFunctionTests."
                 "test_row_number_no_ordering",
                 "prefetch_related.tests.PrefetchLimitTests.test_empty_order",
             },
-            "Oracle doesn't support changing collations on indexed columns (#33671).": {
+            "Tibero doesn't support changing collations on indexed columns (#33671).": {
                 "migrations.test_operations.OperationTests."
                 "test_alter_field_pk_fk_db_collation",
             },
-            "Oracle doesn't support comparing NCLOB to NUMBER.": {
+            "Tibero doesn't support comparing NCLOB to NUMBER.": {
                 "generic_relations_regress.tests.GenericRelationTests."
                 "test_textlink_filter",
             },
-            "Oracle doesn't support casting filters to NUMBER.": {
+            "Tibero doesn't support casting filters to NUMBER.": {
                 "lookup.tests.LookupQueryingTests.test_aggregate_combined_lookup",
             },
-            "Tibero doesn't support JSON type": {
+            "Tibero doesn't support JSON type.": {
                 "schema.tests.SchemaTests.test_db_default_output_field_resolving"
-            }
-        }
-
-        # TODO: 티베로에서는 스킵할 필요가 없을 수도 있으니 일단 테스트를 포함하게 했습니다.
-        #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
-        # if self.connection.oracle_version < (23,):
-        #     skips.update(
-        #         {
-        #             "Raises ORA-00600 on Oracle < 23c: internal error code.": {
-        #                 "model_fields.test_jsonfield.TestQuerying."
-        #                 "test_usage_in_subquery",
-        #             },
-        #         }
-        #     )
-
-        skips.update(
-            {
-                "pyodbc does not hide '-15104: no data found' "
-                "exceptions raised in database triggers.": {
-                    "backends.oracle.tests.TransactionalTests."
-                    "test_hidden_no_data_found_exception"
-                },
+                "model_fields.test_jsonfield.TestQuerying."
+                "test_usage_in_subquery",
             },
-        )
+            "pyodbc does not hide '-15104: no data found' "
+            "exceptions raised in database triggers.": {
+                "backends.oracle.tests.TransactionalTests."
+                "test_hidden_no_data_found_exception"
+            },
+        }
         return skips
 
     @cached_property
@@ -177,19 +155,6 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             "TimeField": "DateTimeField",
         }
 
-    # TODO: Tibero는 collate라는 keyword를 지원하지 않습니다.
-    #       test 도중 예외 발생을 막기 위해 일단 이 method를 주석처리했습니다.
-    #       나중에 어떻게 처리하면 좋을지 더 생각을 해야합니다.
-    # @cached_property
-    # def test_collations(self):
-    #     return {
-    #         "ci": "BINARY_CI",
-    #         "cs": "BINARY",
-    #         "non_default": "SWEDISH_CI",
-    #         "swedish_ci": "SWEDISH_CI",
-    #         "virtual": "SWEDISH_CI" if self.supports_collation_on_charfield else None,
-    #     }
-
     # Tibero 6/7 sql reference을 참고하면 collation keyword 자체가 없습니다.
     supports_collation_on_charfield = False
 
@@ -197,40 +162,38 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     #       나중에 json 관련 뷰가 생성되면 json 지원이 될 수 있는지 확인바랍니다.
     @cached_property
     def supports_json_field(self):
-        return self.connection.oracle_version >= (100,)
+        return self.connection.tibero_version >= (100,)
 
-    # TODO: 일단은 무조건 지원하게 했습니다.
-    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
+    # TODO: Tibero 7에서도 Django의 요구사항에 맞게 json을 지원할 수 있는 방법이 아직 없습니다.
+    #       나중에 json 관련 뷰가 생성되면 json 지원이 될 수 있는지 확인바랍니다.
     @cached_property
     def supports_primitives_in_json_field(self):
-        return self.connection.oracle_version >= (100,)
+        return self.connection.tibero_version >= (100,)
 
     # TODO: 일단은 무조건 지원하게 했습니다.
     #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_frame_exclusion(self):
-        return self.connection.oracle_version >= (1,)
+        return self.connection.tibero_version >= (1,)
 
     # TODO: 일단은 무조건 지원하게 했습니다.
     #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_boolean_expr_in_select_clause(self):
-        return self.connection.oracle_version >= (1,)
+        return self.connection.tibero_version >= (1,)
 
     # TODO: 일단은 무조건 지원하게 했습니다.
     #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_comparing_boolean_expr(self):
-        return self.connection.oracle_version >= (1,)
+        return self.connection.tibero_version >= (1,)
 
     # TODO: 일단은 무조건 지원하게 했습니다.
     #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_aggregation_over_interval_types(self):
-        return self.connection.oracle_version >= (1,)
+        return self.connection.tibero_version >= (1,)
 
-    # TODO: 일단은 무조건 지원하게 했습니다.
-    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def bare_select_suffix(self):
         return " FROM DUAL"

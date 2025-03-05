@@ -17,10 +17,9 @@ class DatabaseCreation(BaseDatabaseCreation):
         This is analogous to other backends' `_nodb_connection` property,
         which allows access to an "administrative" connection which can
         be used to manage the test databases.
-        For Oracle, the only connection that can be used for that purpose
+        For Tibero, the only connection that can be used for that purpose
         is the main (non-test) connection.
         """
-        # TODO: 티베로 pyodbc에 맞게 수정하기
         settings_dict = settings.DATABASES[self.connection.alias]
         user = settings_dict.get("SAVED_USER") or settings_dict["USER"]
         password = settings_dict.get("SAVED_PASSWORD") or settings_dict["PASSWORD"]
@@ -37,8 +36,8 @@ class DatabaseCreation(BaseDatabaseCreation):
                         cursor, parameters, verbosity, keepdb
                     )
                 except Exception as e:
-                    #  -7098은 Duplicate tablespace가 존재하면 발생하는 에러 번호
-                    if "-7098" not in e.args[1]:
+                    # TBR-7098: Duplicate tablespace가 존재하면 발생하는 에러 번호
+                    if "-7098" not in str(e):
                         # All errors except "tablespace already exists" cancel tests
                         self.log("Got an error creating the test database: %s" % e)
                         sys.exit(2)
@@ -61,7 +60,7 @@ class DatabaseCreation(BaseDatabaseCreation):
                         except Exception as e:
                             # 테이블 스페이스를 사용하는 유저가 있을 경우 -7355 에러 발생
                             # 따라서 유저를 삭제 후 테이블 스페이스 삭제 재시도
-                            if '-7355' in e.args[1]:
+                            if '-7355' in str(e):
                                 self._handle_objects_preventing_db_destruction(
                                     cursor, parameters, verbosity, autoclobber
                                 )
@@ -92,8 +91,7 @@ class DatabaseCreation(BaseDatabaseCreation):
                 try:
                     self._create_test_user(cursor, parameters, verbosity, keepdb)
                 except Exception as e:
-                    # TODO: 티베로에 맞게 수정하기
-                    if "ORA-01920" not in str(e):
+                    if "-7100" not in str(e):
                         # All errors except "user already exists" cancel tests
                         self.log("Got an error creating the test user: %s" % e)
                         sys.exit(2)
@@ -128,7 +126,7 @@ class DatabaseCreation(BaseDatabaseCreation):
         """
         Switch to the user that's used for creating the test database.
 
-        Oracle doesn't have the concept of separate databases under the same
+        Tibero doesn't have the concept of separate databases under the same
         user, so a separate user is used; see _create_test_db(). The main user
         is also needed for cleanup when testing is completed, so save its
         credentials in the SAVED_USER/SAVED_PASSWORD key in the settings dict.
@@ -231,7 +229,7 @@ class DatabaseCreation(BaseDatabaseCreation):
     def _execute_test_db_creation(self, cursor, parameters, verbosity, keepdb=False):
         if verbosity >= 2:
             self.log("_create_test_db(): dbname = %s" % parameters["user"])
-        if self._test_database_oracle_managed_files():
+        if self._test_database_tibero_managed_files():
             statements = [
                 """
                 CREATE TABLESPACE %(tblspace)s
@@ -258,9 +256,9 @@ class DatabaseCreation(BaseDatabaseCreation):
                 """,
             ]
         # Ignore "tablespace already exists" error when keepdb is on.
-        acceptable_ora_err = "-7098" if keepdb else None
+        acceptable_tbr_err = "-7098" if keepdb else None
         self._execute_allow_fail_statements(
-            cursor, statements, parameters, verbosity, acceptable_ora_err
+            cursor, statements, parameters, verbosity, acceptable_tbr_err
         )
 
     def _create_test_user(self, cursor, parameters, verbosity, keepdb=False):
@@ -285,9 +283,9 @@ class DatabaseCreation(BaseDatabaseCreation):
         ]
         # Ignore "user already exists" error when keepdb is on
         # TODO: 티베로에 맞게 수정하기
-        acceptable_ora_err = "ORA-01920" if keepdb else None
+        acceptable_tbr_err = "-7100" if keepdb else None
         success = self._execute_allow_fail_statements(
-            cursor, statements, parameters, verbosity, acceptable_ora_err
+            cursor, statements, parameters, verbosity, acceptable_tbr_err
         )
         # If the password was randomly generated, change the user accordingly.
         if not success and self._test_settings_get("PASSWORD") is None:
@@ -298,9 +296,9 @@ class DatabaseCreation(BaseDatabaseCreation):
         for object_type in ("VIEW", "MATERIALIZED VIEW"):
             extra = "GRANT CREATE %(object_type)s TO %(user)s"
             parameters["object_type"] = object_type
-            # TODO: 티베로에 맞게 수정하기
+            # TBR-17004: Permission denied.
             success = self._execute_allow_fail_statements(
-                cursor, [extra], parameters, verbosity, "ORA-01031"
+                cursor, [extra], parameters, verbosity, "-17004"
             )
             if not success and verbosity >= 2:
                 self.log(
@@ -351,17 +349,17 @@ class DatabaseCreation(BaseDatabaseCreation):
                 raise
 
     def _execute_allow_fail_statements(
-        self, cursor, statements, parameters, verbosity, acceptable_ora_err
+        self, cursor, statements, parameters, verbosity, acceptable_tbr_err
     ):
         """
-        Execute statements which are allowed to fail silently if the Oracle
-        error code given by `acceptable_ora_err` is raised. Return True if the
+        Execute statements which are allowed to fail silently if the Tibero
+        error code given by `acceptable_tbr_err` is raised. Return True if the
         statements execute without an exception, or False otherwise.
         """
         try:
-            # Statement can fail when acceptable_ora_err is not None
+            # Statement can fail when acceptable_tbr_err is not None
             allow_quiet_fail = (
-                acceptable_ora_err is not None and len(acceptable_ora_err) > 0
+                acceptable_tbr_err is not None and len(acceptable_tbr_err) > 0
             )
             self._execute_statements(
                 cursor,
@@ -373,7 +371,7 @@ class DatabaseCreation(BaseDatabaseCreation):
             return True
         except DatabaseError as err:
             description = err.args[1]
-            if acceptable_ora_err is None or acceptable_ora_err not in description:
+            if acceptable_tbr_err is None or acceptable_tbr_err not in description:
                 raise
             return False
 
@@ -420,7 +418,7 @@ class DatabaseCreation(BaseDatabaseCreation):
     def _test_database_passwd(self):
         password = self._test_settings_get("PASSWORD")
         if password is None and self._test_user_create():
-            # Oracle passwords are limited to 30 chars and can't contain symbols.
+            # Tibero passwords are limited to 30 chars and can't contain symbols.
             password = get_random_string(30)
         return password
 
@@ -442,8 +440,7 @@ class DatabaseCreation(BaseDatabaseCreation):
         return self._test_settings_get("DATAFILE_TMP", default=tblspace)
 
     def _test_database_tblspace_maxsize(self):
-        # TODO: 테스트 도중 DATAFILE이 가득 차서 예외가 발생했습니다.
-        #       일관성을 위해 DATAFILE_TMP_MAXSIZE 또한 크기를 조정하는 것을 생각하십시오.
+        # 6GB로 설정한 이유는 2GB로 테스트 도중 DATAFILE이 가득 차서 예외가 발생했습니다.
         return self._test_settings_get("DATAFILE_MAXSIZE", default="6000M")
 
     def _test_database_tblspace_tmp_maxsize(self):
@@ -461,14 +458,14 @@ class DatabaseCreation(BaseDatabaseCreation):
     def _test_database_tblspace_tmp_extsize(self):
         return self._test_settings_get("DATAFILE_TMP_EXTSIZE", default="25M")
 
-    def _test_database_oracle_managed_files(self):
-        return self._test_settings_get("ORACLE_MANAGED_FILES", default=False)
+    def _test_database_tibero_managed_files(self):
+        return self._test_settings_get("TIBERO_MANAGED_FILES", default=False)
 
     def _get_test_db_name(self):
         """
         Return the 'production' DB name to get the test DB creation machinery
         to work. This isn't a great deal in this case because DB names as
-        handled by Django don't have real counterparts in Oracle.
+        handled by Django don't have real counterparts in Tibero.
         """
         return self.connection.settings_dict["NAME"]
 

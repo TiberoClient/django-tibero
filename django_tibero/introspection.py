@@ -206,7 +206,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         return description
 
     def identifier_converter(self, name):
-        """Identifier comparison is case insensitive under Oracle."""
+        """Identifier comparison is case insensitive under Tibero."""
         return name.lower()
 
     # TODO: Tibero6_FS06_CS2005에서 지원안하는 user_tab_identity_cols를 이용하는 sql을 변경해야 합니다.
@@ -229,7 +229,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             """,
             [table_name],
         )
-        # Oracle allows only one identity column per table.
+        # Tibero allows only one identity column per table.
         row = cursor.fetchone()
         if row:
             return [
@@ -239,7 +239,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                     "column": self.identifier_converter(row[1]),
                 }
             ]
-        # To keep backward compatibility for AutoFields that aren't Oracle
+        # To keep backward compatibility for AutoFields that aren't Tibero
         # identity columns.
         for f in table_fields:
             if isinstance(f, models.AutoField):

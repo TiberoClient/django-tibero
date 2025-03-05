@@ -83,32 +83,27 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             description = str(e)
             # If we're changing type to an unsupported type we need a
             # SQLite-ish workaround
-            if "-7237" in description or "ORA-22859" in description:
+            if "-7237" in description:
                 self._alter_field_type_workaround(model, old_field, new_field)
             # If an identity column is changing to a non-numeric type, drop the
             # identity first.
-            elif "ORA-30675" in description:
+            elif "-7535" in description:
                 self._drop_identity(model._meta.db_table, old_field.column)
                 self.alter_field(model, old_field, new_field, strict)
             # If a primary key column is changing to an identity column, drop
             # the primary key first.
-            elif "ORA-30673" in description and old_field.primary_key:
+            # 현재 Tibero backend 구현에서는 아래 identity column관련된 에러가 발생할 수 없습니다.
+            # 다만 나중에 deferred_sql에서 sequence를 사용하는대신 identity column을 사용하는 미래
+            # 를 생각해 원본 코드를 tibero에 수정만 하고 남겼습니다.
+            elif "-7548" in description and old_field.primary_key:
                 self._delete_primary_key(model, strict=True)
                 self._alter_field_type_workaround(model, old_field, new_field)
-            # If a collation is changing on a primary key, drop the primary key
-            # first.
-            elif "ORA-43923" in description and old_field.primary_key:
-                self._delete_primary_key(model, strict=True)
-                self.alter_field(model, old_field, new_field, strict)
-                # Restore a primary key, if needed.
-                if new_field.primary_key:
-                    self.execute(self._create_primary_key_sql(model, new_field))
             else:
                 raise
 
     def _alter_field_type_workaround(self, model, old_field, new_field):
         """
-        Oracle refuses to change from some type to other type.
+        Tibero refuses to change from some type to other type.
         What we need to do instead is:
         - Add a nullable version of the desired field with a temporary name. If
           the new column is an auto field, then the temporary column can't be
@@ -248,7 +243,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             cursor.execute("DROP SEQUENCE %s" % sequence_name)
 
     # TODO: default_collation은 tibero6와 7에 없는 column입니다. 아래 메서드가 무엇을 위한 것인지 파악하고
-    #       수정하기
+    #       수정하기. 그런데 희안하게 모든 Django test에서 이 메서드로 인해 에러가 발생한 경우는 아직 찾지 못했습니다.
     def _get_default_collation(self, table_name):
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -264,8 +259,12 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
             collation = self._get_default_collation(table_name)
         return super()._collate_sql(collation, old_collation, table_name)
 
-    # TODO: GENERATED [BY DEFAULT ON NULL | AS ALWAYS]가 지원되는 티베로 버전만 사용할 경우
-    #       삭제해야하는 코드입니다.
+    # TODO: 아래 메서드는 Django에 존재하지 않고 Tibero를 위해 생성된 메서드입니다. Tibero 6 CS2005
+    #       가 Django의 모든 backend는 identity column을 지원함과 동시에 그에 맞게
+    #       Django Framework의 코드가 자성된 것을 확인했습니다. Identity column 대신에 sequence를
+    #       이용해 autofield를 구현했을 경우 migration에서 잠재적으로 발생할 수 있는 버그가 있을 것으로
+    #       판단되어 GENERATED [BY DEFAULT ON NULL | AS ALWAYS]가 지원되는 티베로 버전만 사용할
+    #       경우 삭제해야하는 코드입니다.
     def _add_sequence_to_deferred_sql_list_if_autofield(self, model, new_field):
         if new_field.get_internal_type() in (
                 "AutoField",

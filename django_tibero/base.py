@@ -1,7 +1,7 @@
 """
-Oracle database backend for Django.
+Tibero database backend for Django.
 
-Requires oracledb: https://oracle.github.io/python-oracledb/
+Requires pyodbc: https://github.com/mkleehammer/pyodbc
 """
 
 import datetime
@@ -34,14 +34,14 @@ if hasattr(settings, 'DATABASE_CONNECTION_POOLING'):
 
 def _setup_environment(environ):
     # Cygwin requires some special voodoo to set the environment variables
-    # properly so that Oracle will see them.
+    # properly so that Tibero will see them.
     if platform.system().upper().startswith("CYGWIN"):
         try:
             import ctypes
         except ImportError as e:
             raise ImproperlyConfigured(
                 "Error loading ctypes: %s; "
-                "the Oracle backend requires ctypes to "
+                "the Tibero backend requires ctypes to "
                 "operate correctly under Cygwin." % e
             )
         kernel32 = ctypes.CDLL("kernel32")
@@ -53,10 +53,6 @@ def _setup_environment(environ):
 # TODO: 환경 변수뿐만 아니라 settings.py를 통해 값을 받는 방식도 고려하기
 _setup_environment(
     [
-        # TODO: 아래 주석 삭제하기
-        # Oracle takes client-side character set encoding from the environment.
-        # ("NLS_LANG", ".AL32UTF8"),
-
         # pyodbc 5.0 이상을 사용할려면 libtbodbc의 환경변수인 TBCLI_WCHAR_TYPE을 UCS2로 설정
         # 해야 합니다.
         ('TBCLI_WCHAR_TYPE', 'UCS2'),
@@ -67,16 +63,9 @@ _setup_environment(
         #       use_returning_into 설정 및 관련 코드를 삭제해야 합니다.
         #       refs: https://code.djangoproject.com/ticket/36189
         ('TBCLI_COMPAT_ALCHEMY', 'YES'),
-
-    # TODO: Tibero에는 없는 변수인 것 같습니다. 아래 주석 삭제하기
-        # This prevents Unicode from getting mangled by getting encoded into the
-        # potentially non-Unicode database character set.
-        # ("ORA_NCHAR_LITERAL_REPLACE", "TRUE"),
     ]
 )
 
-# Some of these import oracledb, so import them after checking if it's
-# installed.
 from .client import DatabaseClient # noqa
 from .creation import DatabaseCreation  # noqa
 from .features import DatabaseFeatures  # noqa
@@ -87,34 +76,23 @@ from .utils import odbc_connection_string_from_settings, timedelta_to_tibero_int
 from .validation import DatabaseValidation  # noqa
 
 @contextmanager
-def wrap_oracle_errors():
+def wrap_tibero_errors():
     try:
         yield
     except Database.Error as e:
-        if '-7102' in e.args[1]:
-            raise Database.DatabaseError(e.args[0], e.args[1])
+        msg = str(e)
+        # pyodbc raises a pyodbc.Error exception with the
+        # following attributes and values:
+        #  type of args is tuple
+        #  args[0] = ODBC error code
+        #  args[1] = 'TBR-10008': parent key not found
+        #            or:
+        #            'TBR-10007: UNIQUE constraint violation
+        # Convert that case to Django's IntegrityError exception.
+        if "-10008" in msg or "-10007" in msg:
+            raise IntegrityError(*e.args)
         else:
             raise
-        # TODO: 아래 코드는 나중에 고치기
-        # oracledb raises a oracledb.DatabaseError exception with the
-        # following attributes and values:
-        #  code = 2091
-        #  message = 'ORA-02091: transaction rolled back
-        #            'ORA-02291: integrity constraint (TEST_DJANGOTEST.SYS
-        #               _C00102056) violated - parent key not found'
-        #            or:
-        #            'ORA-00001: unique constraint (DJANGOTEST.DEFERRABLE_
-        #               PINK_CONSTRAINT) violated
-        # Convert that case to Django's IntegrityError exception.
-        x = e.args[0]
-        if (
-            hasattr(x, "code")
-            and hasattr(x, "message")
-            and x.code == 2091
-            and ("ORA-02291" in x.message or "ORA-00001" in x.message)
-        ):
-            raise IntegrityError(*tuple(e.args))
-        raise
 
 def handle_interval_day_to_second(dto: bytes):
     interval_str = dto.decode()
@@ -156,13 +134,12 @@ class _UninitializedOperatorsDescriptor:
 
 
 class DatabaseWrapper(BaseDatabaseWrapper):
-    # TODO: 테스트를 제외하고 배포할 때는 display_name만 oracle를  tibero로 수정하기
-    #       vendor 이름은 oracle로 나둬야 django code base안에 있는 oracle compiler를
-    #       사용할 수 있습니다.
+    # vendor 이름은 oracle로 나둬야 django code base안에 있는 oracle compiler를
+    # 사용할 수 있습니다.
     vendor = "oracle"
-    display_name = "Oracle"
+    display_name = "Tibero"
 
-    # This dictionary maps Field objects to their associated Oracle column
+    # This dictionary maps Field objects to their associated Tibero column
     # types, as strings. Column-type strings can contain format strings; they'll
     # be interpolated against the values of Field.__dict__ before being output.
     # If a column type is set to None, it won't be included in the output.
@@ -210,8 +187,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     }
     data_type_check_constraints = {
         "BooleanField": "%(qn_column)s IN (0,1)",
-        # TODO: tibero 6/7에서 json 정합성 검사를 어떻게 해야할지 고민해야 합니다.
-        #       CHECK(... IS JSON) 형식을 6와 7에서 지원을 하지 않습니다.
+        # TODO: CHECK(... IS JSON) 형식을 6와 7에서 지원을 하지 않습니다. 나중에 지원되면 추가하기
         # "JSONField": "%(qn_column)s IS JSON",
         "PositiveBigIntegerField": "%(qn_column)s >= 0",
         "PositiveIntegerField": "%(qn_column)s >= 0",
@@ -219,7 +195,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     }
 
     # TODO: 티베로에서도 안되는지 확인하기
-    # Oracle doesn't support a database index on these columns.
+    # Tibero doesn't support a database index on these columns.
     _limited_data_types = ("clob", "nclob", "blob")
 
     operators = _UninitializedOperatorsDescriptor()
@@ -258,18 +234,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         ),
     }
 
-    # TODO: Tibero에서 LIKEC가 지원안됩니다. Tibero 6와 7 모두 standard_operator를 지원한다면
-    #       아래 _likec_operators, _likec_pattern_ops 코드는 삭제해도 됩니다.
-    _likec_operators = {
-        **_standard_operators,
-        "contains": "LIKEC %s ESCAPE '\\'",
-        "icontains": "LIKEC UPPER(%s) ESCAPE '\\'",
-        "startswith": "LIKEC %s ESCAPE '\\'",
-        "endswith": "LIKEC %s ESCAPE '\\'",
-        "istartswith": "LIKEC UPPER(%s) ESCAPE '\\'",
-        "iendswith": "LIKEC UPPER(%s) ESCAPE '\\'",
-    }
-
     # The patterns below are used to generate SQL pattern lookup clauses when
     # the right-hand side of the lookup isn't a raw string (it might be an expression
     # or the result of a bilateral transformation).
@@ -293,9 +257,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         " ESCAPE TRANSLATE('\\' USING NCHAR_CS)"
         for k, v in _pattern_ops.items()
     }
-    _likec_pattern_ops = {
-        k: "LIKEC " + v + " ESCAPE '\\'" for k, v in _pattern_ops.items()
-    }
 
     Database = Database
     SchemaEditorClass = DatabaseSchemaEditor
@@ -314,27 +275,15 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         )
         self.features.can_return_columns_from_insert = use_returning_into
 
-        # opts = self.settings_dict["OPTIONS"]
-
-        # TODO: mssql에서 가져온 코드인데 tibero에서도 쓸모가 있는지 확인되면 추가하기
-        #      _on_error() 코드도 참고해서 wrap_oracle_errors()의 내용을 수정해야
-        #      합니다.
-        # interval to wait for recovery from network error
-        # interval = opts.get('connection_recovery_interval_msec', 0.0)
-        # self.connection_recovery_interval_msec = float(interval) / 1000
-
     def get_database_version(self):
-        return self.oracle_version
+        return self.tibero_version
 
-    # TODO: Tibero ODBC 중에 returning into를 지원하는 버전이 있다. 지원 가능한 버전일 경우
-    #       사용가능하다록 만들기
     # TODO: setting에 불가능한 조합이 있다면 예외 발생시키기 (mssql, oracle, postgresql 참고하기)
     def get_connection_params(self):
-        # conn_params = self.settings_dict["OPTIONS"].copy()
-        # if "use_returning_into" in conn_params:
-        #     del conn_params["use_returning_into"]
-        # return conn_params
-        return self.settings_dict.copy()
+        conn_params = self.settings_dict["OPTIONS"].copy()
+        if "use_returning_into" in conn_params:
+            del conn_params["use_returning_into"]
+        return conn_params
 
     @async_unsafe
     def get_new_connection(self, conn_params):
@@ -388,7 +337,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         # these are set in single statement it isn't clear what is supposed
         # to happen.
         cursor.execute("ALTER SESSION SET NLS_TERRITORY = 'AMERICA'")
-        # Set Oracle date to ANSI date format.  This only needs to execute
+        # Set Tibero date to ANSI date format.  This only needs to execute
         # once when we create a new connection. We also set the Territory
         # to 'AMERICA' which forces Sunday to evaluate to a '1' in
         # TO_CHAR().
@@ -398,27 +347,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             + (" TIME_ZONE = 'UTC'" if settings.USE_TZ else "")
         )
         cursor.close()
+
         if "operators" not in self.__dict__:
-            # Ticket #14149: Check whether our LIKE implementation will
-            # work for this connection or we need to fall back on LIKEC.
-            # This check is performed only once per DatabaseWrapper
-            # instance per thread, since subsequent connections will use
-            # the same settings.
-            cursor = self.create_cursor()
-            try:
-                cursor.execute(
-                    "SELECT 1 FROM DUAL WHERE DUMMY %s"
-                    % self._standard_operators["contains"],
-                    ["X"],
-                )
-            except Database.DatabaseError:
-                # TODO: TIbero에서 likec 키워드가 작동하는지 확인하기
-                self.operators = self._likec_operators
-                self.pattern_ops = self._likec_pattern_ops
-            else:
                 self.operators = self._standard_operators
                 self.pattern_ops = self._standard_pattern_ops
-            cursor.close()
 
         # Ensure all changes are preserved even when AUTOCOMMIT is False.
         if not self.get_autocommit():
@@ -430,10 +362,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     def _commit(self):
         if self.connection is not None:
-            with debug_transaction(self, "COMMIT"), wrap_oracle_errors():
+            with debug_transaction(self, "COMMIT"), wrap_tibero_errors():
                 return self.connection.commit()
 
-    # Oracle doesn't support releasing savepoints. But we fake them when query
+    # Tibero doesn't support releasing savepoints. But we fake them when query
     # logging is enabled to keep query counts consistent with other backends.
     def _savepoint_commit(self, sid):
         if self.queries_logged:
@@ -448,15 +380,17 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         with self.wrap_database_errors:
             self.connection.autocommit = autocommit
 
+    # TODO: 아래 코드는 Tibero에서 작동안하는 sql statements입니다.
+    #       어떻게 해결해야할지 고민하기
+    #       어쩌면 mysql의 check_constraints() 방법을 사용할 수도 있을 것 같습니다.
+    #       django test suite를 통과할려면 아래의 sql 지원이 필요합니다. 반드시 필요한 것은
+    #       아니나 있으면 좋을 것 같습니다.
     # def check_constraints(self, table_names=None):
     #     """
     #     Check constraints by setting them to immediate. Return them to deferred
     #     afterward.
     #     """
     #     with self.cursor() as cursor:
-    #         # TODO: 아래 코드는 Tibero에서 작동안하는 sql statements입니다.
-    #         #       어떻게 해결해야할지 고민하기
-    #         #       어쩌면 mysql의 check_constraints() 방법을 사용할 수도 있을 것 같습니다.
     #         cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
     #         cursor.execute("SET CONSTRAINTS ALL DEFERRED")
 
@@ -469,7 +403,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             return True
 
     @cached_property
-    def oracle_version(self):
+    def tibero_version(self):
         with self.temporary_connection() as cursor:
             cursor.execute("SELECT * FROM V$VERSION")
             version_dict = {key: value for key, value, _ in cursor}
@@ -485,7 +419,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     # TODO: pyodbc 버전만 지원할 예정이기 때문에 필요없는 method일 수도 있습니다.
     #       이 메서드를 사용하는 features.py를 참고해서 지울지 결정하기
     @cached_property
-    def oracledb_version(self):
+    def pyodbc_version(self):
         # 처음엔 libtbodbc의 버전을 반환하는게 맞다고 생각했습니다. 그런데 생각해보니 libtbodbc의
         # 버전이 다르게 해도 pyodbc의 행동을 변경할 수 있는 것이 아닙니다. 오히려 pyodbc 버전을
         # 다르게 해야 기본 설정이 달라지기 때문에 pyodbc 버전 반환을 하게 되었습니다.
@@ -542,7 +476,7 @@ class CursorWrapper:
     def execute(self, sql, params=()):
         sql = self._format_sql(sql, params)
         params = self._fix_params(params)
-        with wrap_oracle_errors():
+        with wrap_tibero_errors():
             return self.cursor.execute(sql, params)
 
     def executemany(self, sql, params_list=()):
@@ -552,7 +486,7 @@ class CursorWrapper:
         raw_params_list = [p for p in params_list]
         sql = self._format_sql(sql, raw_params_list[0])
         fixed_params_list = self._fix_params(raw_params_list)
-        with wrap_oracle_errors():
+        with wrap_tibero_errors():
             return self.cursor.executemany(sql, fixed_params_list)
 
     def fetchone(self):

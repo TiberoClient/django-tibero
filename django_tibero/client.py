@@ -9,7 +9,7 @@ class DatabaseClient(BaseDatabaseClient):
 
     @staticmethod
     def connect_string(settings_dict):
-        from django.db.backends.oracle.utils import dsn
+        from .utils import dsn
 
         return '%s/"%s"@%s' % (
             settings_dict["USER"],

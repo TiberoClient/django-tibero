@@ -18,7 +18,7 @@ from .base import Database
 
 
 class DatabaseOperations(BaseDatabaseOperations):
-    # Oracle uses NUMBER(5), NUMBER(11), and NUMBER(19) for integer fields.
+    # Tibero uses NUMBER(5), NUMBER(11), and NUMBER(19) for integer fields.
     # SmallIntegerField uses NUMBER(11) instead of NUMBER(5), which is used by
     # SmallAutoField, to preserve backward compatibility.
     integer_field_ranges = {
@@ -73,7 +73,7 @@ class DatabaseOperations(BaseDatabaseOperations):
     END;
     """
 
-    # Oracle doesn't support string without precision; use the max string size.
+    # Tibero doesn't support string without precision; use the max string size.
     cast_char_field_without_max_length = "NVARCHAR2(2000)"
     cast_data_types = {
         "AutoField": "NUMBER(11)",
@@ -260,7 +260,7 @@ class DatabaseOperations(BaseDatabaseOperations):
             converters.append(self.convert_timefield_value)
         elif internal_type == "UUIDField":
             converters.append(self.convert_uuidfield_value)
-        # Oracle stores empty strings as null. If the field accepts the empty
+        # Tibero stores empty strings as null. If the field accepts the empty
         # string, undo this to adhere to the Django convention of using
         # the empty string instead of null.
         if expression.output_field.empty_strings_allowed:
@@ -281,10 +281,6 @@ class DatabaseOperations(BaseDatabaseOperations):
         if value in (0, 1):
             value = bool(value)
         return value
-
-    # oracledb always returns datetime.datetime objects for
-    # DATE and TIMESTAMP columns, but Django wants to see a
-    # python datetime.date, .time, or .datetime.
 
     def convert_datetimefield_value(self, value, expression, connection):
         if value is not None:
@@ -370,12 +366,12 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     def quote_name(self, name):
         # SQL92 requires delimited (quoted) names to be case-sensitive.  When
-        # not quoted, Oracle has case-insensitive behavior for identifiers, but
+        # not quoted, Tibero has case-insensitive behavior for identifiers, but
         # always defaults to uppercase.
-        # We simplify things by making Oracle identifiers always uppercase.
+        # We simplify things by making Tibero identifiers always uppercase.
         if not name.startswith('"') and not name.endswith('"'):
             name = '"%s"' % truncate_name(name, self.max_name_length())
-        # Oracle puts the query text into a (query % args) construct, so % signs
+        # Tibero puts the query text into a (query % args) construct, so % signs
         # in names need to be escaped. The '%%' will be collapsed back to '%' at
         # that stage so we aren't really making the name longer here.
         name = name.replace("%", "%%")
@@ -461,7 +457,7 @@ class DatabaseOperations(BaseDatabaseOperations):
 
         truncated_tables = {table.upper() for table in tables}
         constraints = set()
-        # Oracle's TRUNCATE CASCADE only works with ON DELETE CASCADE foreign
+        # Tibero's TRUNCATE CASCADE only works with ON DELETE CASCADE foreign
         # keys which Django doesn't define. Emulate the PostgreSQL behavior
         # which truncates all dependent tables by manually retrieving all
         # foreign key constraints and resolving dependencies.
@@ -520,6 +516,9 @@ class DatabaseOperations(BaseDatabaseOperations):
             sql.extend(self.sequence_reset_by_name_sql(style, sequences))
         return sql
 
+    # base.py에서 auto field에 대해 Identity keyword를 사용하지 않음에 따라 django 5.1.5
+    # Oracle backend의 sequence_reset_sql를 그대로 사용할 수 없습니다.
+    # 대신 Django의 훨씬 낮은 버전의 Oracle backend의 seuqnce_reset_sql()을 참고했습니다.
     def sequence_reset_by_name_sql(self, style, sequences):
         sql = []
         for sequence_info in sequences:
@@ -534,6 +533,9 @@ class DatabaseOperations(BaseDatabaseOperations):
             sql.append(query)
         return sql
 
+    # base.py에서 auto field에 대해 Identity keyword를 사용하지 않음에 따라 django 5.1.5
+    # Oracle backend의 sequence_reset_sql를 그대로 사용할 수 없습니다.
+    # 대신 Django의 훨씬 낮은 버전의 Oracle backend의 seuqnce_reset_sql()을 참고했습니다.
     def sequence_reset_sql(self, style, model_list):
         from django.db import models
         output = []
@@ -560,52 +562,6 @@ class DatabaseOperations(BaseDatabaseOperations):
                                            'column': column_name})
         return output
 
-    # def sequence_reset_by_name_sql(self, style, sequences):
-    #     sql = []
-    #     for sequence_info in sequences:
-    #         no_autofield_sequence_name = self._get_no_autofield_sequence_name(
-    #             sequence_info["table"]
-    #         )
-    #         table = self.quote_name(sequence_info["table"])
-    #         column = self.quote_name(sequence_info["column"] or "id")
-    #         query = self._sequence_reset_sql % {
-    #             "no_autofield_sequence_name": no_autofield_sequence_name,
-    #             "table": table,
-    #             "column": column,
-    #             "table_name": strip_quotes(table),
-    #             "column_name": strip_quotes(column),
-    #             "suffix": self.connection.features.bare_select_suffix,
-    #         }
-    #         sql.append(query)
-    #     return sql
-    #
-    # def sequence_reset_sql(self, style, model_list):
-    #     output = []
-    #     query = self._sequence_reset_sql
-    #     for model in model_list:
-    #         for f in model._meta.local_fields:
-    #             if isinstance(f, AutoField):
-    #                 no_autofield_sequence_name = self._get_no_autofield_sequence_name(
-    #                     model._meta.db_table
-    #                 )
-    #                 table = self.quote_name(model._meta.db_table)
-    #                 column = self.quote_name(f.column)
-    #                 output.append(
-    #                     query
-    #                     % {
-    #                         "no_autofield_sequence_name": no_autofield_sequence_name,
-    #                         "table": table,
-    #                         "column": column,
-    #                         "table_name": strip_quotes(table),
-    #                         "column_name": strip_quotes(column),
-    #                         "suffix": self.connection.features.bare_select_suffix,
-    #                     }
-    #                 )
-    #                 # Only one AutoField is allowed per model, so don't
-    #                 # continue to loop
-    #                 break
-    #     return output
-
     def start_transaction_sql(self):
         return ""
 
@@ -620,7 +576,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         Transform a date value to an object compatible with what is expected
         by the backend driver for date columns.
         The default implementation transforms the date to text, but that is not
-        necessary for Oracle.
+        necessary for Tibero.
         """
         return value
 
@@ -637,13 +593,12 @@ class DatabaseOperations(BaseDatabaseOperations):
         if value is None:
             return None
 
-        # oracledb doesn't support tz-aware datetimes
         if timezone.is_aware(value):
             if settings.USE_TZ:
                 value = timezone.make_naive(value, self.connection.timezone)
             else:
                 raise ValueError(
-                    "Oracle backend does not support timezone-aware datetimes when "
+                    "Tibero backend does not support timezone-aware datetimes when "
                     "USE_TZ is False."
                 )
 
@@ -656,9 +611,9 @@ class DatabaseOperations(BaseDatabaseOperations):
         if isinstance(value, str):
             return datetime.datetime.strptime(value, "%H:%M:%S")
 
-        # Oracle doesn't support tz-aware times
+        # Tibero doesn't support tz-aware times
         if timezone.is_aware(value):
-            raise ValueError("Oracle backend does not support timezone-aware times.")
+            raise ValueError("Tibero backend does not support timezone-aware times.")
 
         return datetime.datetime(
             1900, 1, 1, value.hour, value.minute, value.second, value.microsecond
@@ -682,50 +637,22 @@ class DatabaseOperations(BaseDatabaseOperations):
         elif connector == "^":
             return "POWER(%s)" % ",".join(sub_expressions)
         elif connector == "#":
-            raise NotSupportedError("Bitwise XOR is not supported in Oracle.")
+            raise NotSupportedError("Bitwise XOR is not supported in Tibero.")
         return super().combine_expression(connector, sub_expressions)
 
     def _get_no_autofield_sequence_name(self, table):
         """
         Manually created sequence name to keep backward compatibility for
-        AutoFields that aren't Oracle identity columns.
+        AutoFields that aren't Tibero identity columns.
         """
         name_length = self.max_name_length() - 3
         return "%s_SQ" % truncate_name(strip_quotes(table), name_length).upper()
 
+    # Oracle backend의 bulk_insert_sql() 대신 mssql에서 사용하는 bulk_insert_sql()를 참고했습니다.
     def bulk_insert_sql(self, fields, placeholder_rows):
         placeholder_rows_sql = (", ".join(row) for row in placeholder_rows)
         values_sql = ", ".join("(%s)" % sql for sql in placeholder_rows_sql)
         return "VALUES " + values_sql
-
-    # TODO: 위의 bulk_insert_sql은 mssql에서 가져온 내용이고 아래는 oracle 코드에서 가져온 것이다. 서로 차이점이 뭔지 알아보기
-    # def bulk_insert_sql(self, fields, placeholder_rows):
-    #     field_placeholders = [
-    #         BulkInsertMapper.types.get(
-    #             getattr(field, "target_field", field).get_internal_type(), "%s"
-    #         )
-    #         for field in fields
-    #         if field
-    #     ]
-    #     query = []
-    #     for row in placeholder_rows:
-    #         select = []
-    #         for i, placeholder in enumerate(row):
-    #             # A model without any fields has fields=[None].
-    #             if fields[i]:
-    #                 placeholder = field_placeholders[i] % placeholder
-    #             # Add columns aliases to the first select to avoid "ORA-00918:
-    #             # column ambiguously defined" when two or more columns in the
-    #             # first select have the same value.
-    #             if not query:
-    #                 placeholder = "%s col_%s" % (placeholder, i)
-    #             select.append(placeholder)
-    #         suffix = self.connection.features.bare_select_suffix
-    #         query.append(f"SELECT %s{suffix}" % ", ".join(select))
-    #     # Bulk insert to tables with Oracle identity columns causes Oracle to
-    #     # add sequence.nextval to it. Sequence.nextval cannot be used with the
-    #     # UNION operator. To prevent incorrect SQL, move UNION to a subquery.
-    #     return "SELECT * FROM (%s)" % " UNION ALL ".join(query)
 
     def subtract_temporals(self, internal_type, lhs, rhs):
         if internal_type == "DateField":
@@ -739,7 +666,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         return super().subtract_temporals(internal_type, lhs, rhs)
 
     def autoinc_sql(self, table, column):
-        # To simulate auto-incrementing primary keys in Oracle, we have to
+        # To simulate auto-incrementing primary keys in Tibero, we have to
         # create a sequence and a trigger.
         args = {
             'sq_name': self._get_sequence_name(table, column),
@@ -786,14 +713,14 @@ class DatabaseOperations(BaseDatabaseOperations):
         return '%s_TR' % name
 
     def bulk_batch_size(self, fields, objs):
-        """Oracle restricts the number of parameters in a query."""
+        """Tibero restricts the number of parameters in a query."""
         if fields:
             return self.connection.features.max_query_params // len(fields)
         return len(objs)
 
     def conditional_expression_supported_in_where_clause(self, expression):
         """
-        Oracle supports only EXISTS(...) or filters in the WHERE clause, others
+        Tibero supports only EXISTS(...) or filters in the WHERE clause, others
         must be compared with True.
         """
         if isinstance(expression, (Exists, Lookup, WhereNode)):
