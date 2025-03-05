@@ -280,10 +280,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     # TODO: setting에 불가능한 조합이 있다면 예외 발생시키기 (mssql, oracle, postgresql 참고하기)
     def get_connection_params(self):
-        conn_params = self.settings_dict["OPTIONS"].copy()
-        if "use_returning_into" in conn_params:
-            del conn_params["use_returning_into"]
-        return conn_params
+        return self.settings_dict.copy()
 
     @async_unsafe
     def get_new_connection(self, conn_params):

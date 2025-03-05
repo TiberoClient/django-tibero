@@ -518,7 +518,7 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     # base.py에서 auto field에 대해 Identity keyword를 사용하지 않음에 따라 django 5.1.5
     # Oracle backend의 sequence_reset_sql를 그대로 사용할 수 없습니다.
-    # 대신 Django의 훨씬 낮은 버전의 Oracle backend의 seuqnce_reset_sql()을 참고했습니다.
+    # 대신 Django 1.11.29의 Oracle backend의 seuqnce_reset_sql()을 참고했습니다.
     def sequence_reset_by_name_sql(self, style, sequences):
         sql = []
         for sequence_info in sequences:
@@ -535,7 +535,7 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     # base.py에서 auto field에 대해 Identity keyword를 사용하지 않음에 따라 django 5.1.5
     # Oracle backend의 sequence_reset_sql를 그대로 사용할 수 없습니다.
-    # 대신 Django의 훨씬 낮은 버전의 Oracle backend의 seuqnce_reset_sql()을 참고했습니다.
+    # 대신 Django 1.11.29의 Oracle backend의 seuqnce_reset_sql()을 참고했습니다.
     def sequence_reset_sql(self, style, model_list):
         from django.db import models
         output = []
