@@ -455,15 +455,11 @@ class CursorWrapper:
         """
         new_params = []
         for param in params:
-            # tbcli의 현재 구현에는 SQL_C_TIMESTAMP의 microseconds를 입력 받지 못하는 버그가
-            # 있는 것 같습니다. 이 문제를 우회하기 위해 SQLAlchemy-Tibero처럼 입력값을 str으로
-            # 주었습니다.
-            if isinstance(param, datetime.datetime):
-                new_params.append(str(param))
-
             # pyodbc는 timedelta를 지원하지 않습니다. Django의 DurationField같은 타입을 지원하기
             # 위해서는 timedelta 타입을 문자열로 변경해야 합니다.
-            elif isinstance(param, datetime.timedelta):
+            # 하지만 여전히 prepared statement에서 사용 못하는 문제가 있으며 이로 인해
+            # timedelta 관련 연산에서는 문제가 발생할 수 있습니다.
+            if isinstance(param, datetime.timedelta):
                 new_params.append(timedelta_to_tibero_interval_string(param))
             else:
                 new_params.append(param)
