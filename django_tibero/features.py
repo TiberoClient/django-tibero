@@ -159,23 +159,31 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     def supports_primitives_in_json_field(self):
         return self.connection.tibero_version >= (100,)
 
-    # TODO: 일단은 무조건 지원하게 했습니다.
-    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_frame_exclusion(self):
-        return self.connection.tibero_version >= (1,)
+        # Tibero 7에서 관련 테스트가 다 실패하는 것을 확인했습니다.
+        # 다음과 같은 WINDOWS 함수에서 EXCLUDE가 지원안되는 것을 확인했습니다.
+        #   SUM(e."SALARY") OVER (
+        #       ORDER BY e."HIRE_DATE" ASC, e."NAME" DESC
+        #       ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+        #       EXCLUDE TIES
+        #   ) AS "SUM_SALARY_COHORT"
+        return self.connection.tibero_version >= (100,)
 
-    # TODO: 일단은 무조건 지원하게 했습니다.
-    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_boolean_expr_in_select_clause(self):
-        return self.connection.tibero_version >= (1,)
+        # Tibero 7에서 관련 테스트가 다 실패하는 것을 확인했습니다.
+        # 다음과 같은 select 문안 boolean expression이 다 실패하는 것을 확인했습니다.
+        #   SELECT 1 = 1 FROM DUAL;
+        #   SELECT 1 < 3 FROM DUAL;
+        return self.connection.tibero_version >= (100,)
 
-    # TODO: 일단은 무조건 지원하게 했습니다.
-    #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
     @cached_property
     def supports_comparing_boolean_expr(self):
-        return self.connection.tibero_version >= (1,)
+        # Tibero 7에서 관련 쿼리가 실행이 안되는 것을 확인했습니다.
+        # 다음과 같이 where clause안에 boolean expression이 작동안하는 것을 확ㅇ니했습니다.
+        #  SELECT 1 FROM DUAL WHERE (1 = 1) IS NOT NULL;
+        return self.connection.tibero_version >= (100,)
 
     # TODO: 일단은 무조건 지원하게 했습니다.
     #       나중에 실패하는 테스트 보고나서 티베로에 맞게 수정하기
