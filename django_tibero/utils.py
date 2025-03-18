@@ -1,3 +1,4 @@
+import datetime
 import re
 
 
@@ -82,18 +83,48 @@ def dsn(conn_params):
 
 
 def timedelta_to_tibero_interval_string(timedelta):
-    # timedelta에서 days, seconds, microseconds 추출
-    days = timedelta.days
-    seconds = timedelta.seconds
+    # Python의 timedelta 객체를 Tibero의 INTERVAL DAY(9) TO SECOND(6) 문자열로 변환하는 함수입니다.
+    #
+    # timedelta가 양수인 경우, 아래의 코드처럼 days와 seconds 속성을 단순히 추출해 시, 분, 초로
+    # 계산해 문자열을 만들 수 있습니다.
+    #
+    #     days = timedelta.days
+    #     seconds = timedelta.seconds
+    #
+    #     h = seconds // 3600
+    #     m = (seconds % 3600) // 60
+    #     s = seconds % 60
+    #     ms = timedelta.microseconds
+    #     return f"INTERVAL '{days} {h}:{m}:{s}.{ms:06}' DAY(9) TO SECOND(6)"
+    #
+    # 그러나 timedelta가 음수일 경우 Python에서 이를 표현하는 방식 때문에 주의가 필요합니다.
+    #
+    # 예를 들어, `datetime.timedelta(seconds=-3)`을 문자열로 변환하면:
+    #
+    #     str(datetime.timedelta(seconds=-3))-> '-1 day, 23:59:57'
+    #
+    # 즉, '-1 day + 23:59:57 = -3초'와 같은 방식입니다.
+    # 이처럼 복잡한 방식으로 음수를 표현하기 때문에 단순히 days, seconds 필드만 참조해서 문자열을 만들면
+    # 정확하지 않습니다.
+    #
+    # 따라서 timedelta의 전체 마이크로초 값을 절댓값으로 가져온 후,
+    # 각 단위 (days, hours, minutes, seconds, microseconds)로 재계산하여 부호와 함께 포맷팅합니다.
+    # 자세한 설명은 https://docs.python.org/3/library/datetime.html#datetime.timedelta.total_seconds
+    # 을 참고하세요.
 
-    # 시, 분, 초로 변환
-    h = seconds // 3600
-    m = (seconds % 3600) // 60
-    s = seconds % 60
-    ms = timedelta.microseconds
+    total_microseconds = abs(timedelta // datetime.timedelta(microseconds=1))
+    if timedelta.days >= 0:
+        sign = '+'
+    else:
+        sign = '-'
+
+    d, remainder = divmod(total_microseconds, 86400 * 1_000_000)
+    h, remainder = divmod(remainder, 3600 * 1_000_000)
+    m, remainder = divmod(remainder, 60 * 1_000_000)
+    s, ms = divmod(remainder, 1_000_000)
 
     # 마이크로초를 소수점 이하 6자리로 변환
-    return f"{days} {h}:{m}:{s}.{ms:06}"
+    return f"INTERVAL '{sign}{d} {h}:{m}:{s}.{ms:06}' DAY(9) TO SECOND(6)"
 
 
 paren_number_pattern = re.compile(r'\(\d+\)')

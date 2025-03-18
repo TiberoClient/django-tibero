@@ -12,7 +12,7 @@ from contextlib import contextmanager
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.db import IntegrityError
+from django.db import DatabaseError, IntegrityError
 from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.backends.utils import debug_transaction
 from django.utils.asyncio import async_unsafe
@@ -91,10 +91,58 @@ def wrap_tibero_errors():
         # Convert that case to Django's IntegrityError exception.
         if "-10008" in msg or "-10007" in msg:
             raise IntegrityError(*e.args)
+        elif "-11018" in msg:
+            raise DatabaseError(*e.args)
         else:
             raise
 
 def handle_interval_day_to_second(dto: bytes):
+    # Tibero의 INTERVAL DAY(n) TO SECOND(m) 타입은 day와 second 필드의 precision(자리수)에 따라
+    # 문자열로 표현될 때 각 필드의 자릿수가 달라집니다.
+    #
+    # Tibero의 문서에는 나와있지 않으나 테스트 결과 n은 1부터 9까지 m은 0부터 9까지 가능합니다.
+    #
+    # - day_precision: DAY 필드의 자릿수 (n)
+    # - fractional_seconds_precision: SECOND 필드의 소수점 이하 자릿수 (m)
+    #
+    # 예시로,
+    # day_precision이 1이면 days 부분이 1자리,
+    # day_precision이 9이면 days 부분이 9자리로 0으로 패딩됩니다.
+    # fractional_seconds_precision도 동일하게 소수점 이하 자릿수에 맞춰 0으로 채워집니다.
+    #
+    # 다양한 precision 조합에 따른 dto의 byte 표현 예시:
+    #
+    #   b'+5 12:34:56.1000000000'          -> DAY(1), SECOND(9)
+    #   b'+005 12:34:56.1000000000'        -> DAY(3), SECOND(9)
+    #   b'+000005 12:34:56.1000000000'     -> DAY(6), SECOND(9)
+    #   b'+000000005 12:34:56.1000000000'  -> DAY(9), SECOND(9)
+    #
+    #   b'+000000005 12:34:56.1'           -> DAY(9), SECOND(1)
+    #   b'+000000005 12:34:56.100'         -> DAY(9), SECOND(3)
+    #   b'+000000005 12:34:56.100000'      -> DAY(9), SECOND(6)
+    #   b'+000000005 12:34:56.100000000'   -> DAY(9), SECOND(9)
+    #
+    #   b'+0005 12:34:56.1000'             -> DAY(4), SECOND(4)
+    #   b'+0005 12:34:56'                  -> DAY(4), SECOND(0)
+    #   b'-0005 12:34:56.1000'             -> DAY(4), SECOND(4)
+    #   b'-0005 12:34:56'                  -> DAY(4), SECOND(0)
+    #
+    # 따라서 dto는 항상 고정된 길이가 아니라 dynamic한 특징을 가지고 있기 때문에
+    # 이를 timedelta로 변환할 때 주의가 필요합니다.
+    #
+    # 누군가는, Django-Tibero의 DurationField의 실제 타입이 INTERVAL DAY(9) TO SECOND(6)
+    # 이기에 항상 고정된 길이의 dto가 입력으로 들어온다고 생각할 수 있습니다. 실제로는
+    # 단순히 column 값을 select하는 것뿐만 아니라, interval 값이 나오는 expression을
+    # 사용하는 경우 dto의 길이는 예측 불가능할 수 있습니다.
+    # 이 때, n과 m (day_precision, fractional_seconds_precision) 값은 동적으로 결정되므로
+    # 이를 처리하는 과정에서 예상치 못한 자리수 문제가 발생할 수 있습니다.
+    #
+    # 예시:
+    #   SELECT
+    #     TO_TIMESTAMP('2295/09/06 04:15:30.746999', 'YYYY/MM/DD HH24:MI:SS.FF6') -
+    #     TO_TIMESTAMP('2010/06/25 12:15:30.747000', 'YYYY/MM/DD HH24:MI:SS.FF6')
+    #   FROM DUAL;
+
     interval_str = dto.decode()
     days, time_str = interval_str.split()
 
@@ -104,10 +152,25 @@ def handle_interval_day_to_second(dto: bytes):
     minutes = int(minutes)
 
     if "." in rest:
-        seconds, microseconds = map(int, rest.split("."))
+        seconds, microseconds = rest.split(".")
+        seconds = int(seconds)
+
+        if len(microseconds) != 9:
+            microseconds = microseconds + "0" * (9 - len(microseconds))
+
+        # python의 timedelta는 nanoseconds를 표현하지 못하기 때문에 nanoseconds 데이터는
+        # 잃어버리게 됩니다.
+        microseconds = int(microseconds[:-3])
     else:
         seconds = int(rest)
         microseconds = 0
+
+    # dto 문자열이 음수인 경우 음수로 표현
+    if days < 0:
+        hours = -hours
+        minutes = -minutes
+        seconds = -seconds
+        microseconds = -microseconds
 
     # timedelta 객체 생성
     return datetime.timedelta(
@@ -439,36 +502,33 @@ class CursorWrapper:
             self.active = False
             self.cursor.close()
 
+    def _preprocess_timedelta_params(self, sql, params):
+        if not params:
+            return sql, params
+        if not any(isinstance(param, datetime.timedelta) for param in params):
+            return sql, params
+
+        tmp = []
+        new_params = []
+        for i, param in enumerate(params):
+            if isinstance(param, datetime.timedelta):
+                tmp.append(timedelta_to_tibero_interval_string(param))
+            else:
+                tmp.append("%s")
+                new_params.append(param)
+
+        new_sql = sql % tuple(tmp)
+        return new_sql, new_params
+
     def _format_sql(self, sql, params):
         # pyodbc uses '?' instead of '%s' as parameter placeholder.
         if params != () and params != []:
             sql = sql % tuple('?' * len(params))
         return sql
 
-    def _fix_params(self, params):
-        """
-        pyodbc와 Django과 함께 잘 작동을 할려면 cursor.execute()하기 전에 파라미터의 타입과 값을
-        변경해야 하는 일이 있습니다. 그런데 SQLAlchemy와 다르게 cursor.execute() 이전에 값을
-        변경하는 방법을 제공하지 않는 것 같습니다. 따라서 이 메서드를 따로 구현했습니다. 다만
-        SQLAlchemy와 다르게 Django에서는 모든 파라미터를 iterating 하기때문에 성능상 저하기 될 수
-        있습니다.
-        """
-        new_params = []
-        for param in params:
-            # pyodbc는 timedelta를 지원하지 않습니다. Django의 DurationField같은 타입을 지원하기
-            # 위해서는 timedelta 타입을 문자열로 변경해야 합니다.
-            # 하지만 여전히 prepared statement에서 사용 못하는 문제가 있으며 이로 인해
-            # timedelta 관련 연산에서는 문제가 발생할 수 있습니다.
-            if isinstance(param, datetime.timedelta):
-                new_params.append(timedelta_to_tibero_interval_string(param))
-            else:
-                new_params.append(param)
-
-        return new_params
-
     def execute(self, sql, params=()):
+        sql, params = self._preprocess_timedelta_params(sql, params)
         sql = self._format_sql(sql, params)
-        params = self._fix_params(params)
         with wrap_tibero_errors():
             return self.cursor.execute(sql, params)
 

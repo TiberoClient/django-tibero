@@ -7,10 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Added
-- Initial release of the Tibero Backend for Django.
+- N/A
 
 ### Changed
-- N/A
+- Extended Python timedelta support: previously limited to inserting values and selecting columns,
+  now supports arithmetic operations between timedelta values.
 
 ### Fixed
-- N/A
+- Resolved an issue where timedelta objects with negative values did not behave correctly.
