@@ -651,11 +651,8 @@ class DatabaseOperations(BaseDatabaseOperations):
         name_length = self.max_name_length() - 3
         return "%s_SQ" % truncate_name(strip_quotes(table), name_length).upper()
 
-    # Oracle backend의 bulk_insert_sql() 대신 mssql에서 사용하는 bulk_insert_sql()를 참고했습니다.
-    def bulk_insert_sql(self, fields, placeholder_rows):
-        placeholder_rows_sql = (", ".join(row) for row in placeholder_rows)
-        values_sql = ", ".join("(%s)" % sql for sql in placeholder_rows_sql)
-        return "VALUES " + values_sql
+    # Oracle backend의 bulk_insert_sql() 대신 BaseDatabaseOperations의 기본
+    # bulk_insert_sql()를 사용하도록 메서드를 삭제했습니다.
 
     def subtract_temporals(self, internal_type, lhs, rhs):
         if internal_type == "DateField":
