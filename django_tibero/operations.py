@@ -18,20 +18,23 @@ from .base import Database
 
 
 class DatabaseOperations(BaseDatabaseOperations):
-    # Tibero uses NUMBER(5), NUMBER(11), and NUMBER(19) for integer fields.
-    # SmallIntegerField uses NUMBER(11) instead of NUMBER(5), which is used by
-    # SmallAutoField, to preserve backward compatibility.
-    integer_field_ranges = {
-        "SmallIntegerField": (-99999999999, 99999999999),
-        "IntegerField": (-99999999999, 99999999999),
-        "BigIntegerField": (-9999999999999999999, 9999999999999999999),
-        "PositiveBigIntegerField": (0, 9999999999999999999),
-        "PositiveSmallIntegerField": (0, 99999999999),
-        "PositiveIntegerField": (0, 99999999999),
-        "SmallAutoField": (-99999, 99999),
-        "AutoField": (-99999999999, 99999999999),
-        "BigAutoField": (-9999999999999999999, 9999999999999999999),
-    }
+    # Oracle Backend는 아래와 같은 dict을 사용하고 있습니다. Tibero backend에서도 초기에는 동일한
+    # dict을 사용했으나, model_fields.test_autofield.BigAutoFieldTests에서 문제가 발생했습니다.
+    # 이 테스트는 각 필드 타입에 대해 가장 큰 숫자를 넣고 overflow가 발생하는지 테스트하는 내용입니다.
+    # 하지만 pyodbc에서는 최대 64비트 숫자만 삽입할 수 있어서, Oracle backend에서는 overflow가
+    # 발생하지 않아야 할 숫자가 Tibero에서는 삽입되지 않는 문제가 있었습니다. 이 문제를 해결하기 위해 sqlite3나
+    # postgresql과 같은 방식으로 변경하였습니다.
+    # integer_field_ranges = {
+    #     "SmallIntegerField": (-99999999999, 99999999999),
+    #     "IntegerField": (-99999999999, 99999999999),
+    #     "BigIntegerField": (-9999999999999999999, 9999999999999999999),
+    #     "PositiveBigIntegerField": (0, 9999999999999999999),
+    #     "PositiveSmallIntegerField": (0, 99999999999),
+    #     "PositiveIntegerField": (0, 99999999999),
+    #     "SmallAutoField": (-99999, 99999),
+    #     "AutoField": (-99999999999, 99999999999),
+    #     "BigAutoField": (-9999999999999999999, 9999999999999999999),
+    # }
     set_operators = {**BaseDatabaseOperations.set_operators, "difference": "MINUS"}
 
     # TODO: colorize this SQL code with style.SQL_KEYWORD(), etc.
