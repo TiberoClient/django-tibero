@@ -78,7 +78,6 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_slicing_ordering_in_compound = True
     requires_compound_order_by_subquery = True
     allows_multiple_constraints_on_same_fields = False
-    supports_json_field_contains = False
     supports_collation_on_textfield = False
     test_now_utc_template = "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'"
     # TOOD: 테스트를 하면서 티베로에서 실패하는 메서드 추가하기
@@ -124,7 +123,6 @@ class DatabaseFeatures(BaseDatabaseFeatures):
             },
             "Tibero doesn't support JSON type.": {
                 "schema.tests.SchemaTests.test_db_default_output_field_resolving",
-                "model_fields.test_jsonfield.TestQuerying.test_usage_in_subquery",
             },
             "pyodbc does not hide '-15104: no data found' exceptions raised in database triggers.": {
                 "backends.oracle.tests.TransactionalTests.test_hidden_no_data_found_exception"
@@ -147,17 +145,34 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     # Tibero 6/7 sql reference을 참고하면 collation keyword 자체가 없습니다.
     supports_collation_on_charfield = False
 
-    # TODO: Tibero 7에서도 Django의 요구사항에 맞게 json을 지원할 수 있는 방법이 아직 없습니다.
-    #       나중에 json 관련 뷰가 생성되면 json 지원이 될 수 있는지 확인바랍니다.
-    @cached_property
-    def supports_json_field(self):
-        return self.connection.tibero_version >= (100,)
+    ##############################################################
+    ##################### JSON Field Support #####################
+    ##############################################################
+    # TODO: Tibero 7에서 json 관련 뷰과 생성되면 지원하기.
+    #       그 전까지는 json 필드 지원은 불가합니다.
+    # Does the backend support JSONField?
+    supports_json_field = False
+    # Can the backend introspect a JSONField?
+    can_introspect_json_field = False
+    # Does the backend support primitives in JSONField?
+    supports_primitives_in_json_field = False
+    # Is there a true datatype for JSON?
+    has_native_json_field = False
+    # Does the backend use PostgreSQL-style JSON operators like '->'?
+    has_json_operators = False
+    # Does the backend support __contains and __contained_by lookups for
+    # a JSONField?
+    supports_json_field_contains = False
+    # Does value__d__contains={'f': 'g'} (without a list around the dict) match
+    # {'d': [{'f': 'g'}]}?
+    json_key_contains_list_matching_requires_list = False
+    # Does the backend support JSONObject() database function?
+    has_json_object_function = False
 
-    # TODO: Tibero 7에서도 Django의 요구사항에 맞게 json을 지원할 수 있는 방법이 아직 없습니다.
-    #       나중에 json 관련 뷰가 생성되면 json 지원이 될 수 있는지 확인바랍니다.
-    @cached_property
-    def supports_primitives_in_json_field(self):
-        return self.connection.tibero_version >= (100,)
+    ##############################################################
+    ################## END OF JSON Field Support #################
+    ##############################################################
+
 
     @cached_property
     def supports_frame_exclusion(self):
