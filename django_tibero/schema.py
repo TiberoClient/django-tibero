@@ -30,9 +30,8 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
     def quote_value(self, value):
         if isinstance(value, (datetime.date, datetime.time, datetime.datetime)):
             return "'%s'" % value
-        # TODO: 이 부분 어디에 쓰이는거지?? 까먹었다. 분명 문제가되니 테스트를 통해 확인하기
         elif isinstance(value, datetime.timedelta):
-            return "'%s'" % timedelta_to_tibero_interval_string(value)
+            return timedelta_to_tibero_interval_string(value)
         elif isinstance(value, str):
             return "'%s'" % value.replace("'", "''")
         elif isinstance(value, (bytes, bytearray, memoryview)):
